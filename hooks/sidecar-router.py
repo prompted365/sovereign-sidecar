@@ -191,6 +191,23 @@ PATTERN_TABLE = [
         r"\b(robots\.txt|llms\.txt)\b",
         r"\bAI access stack\b",
     ], 0.80),
+
+    # /delegate — orchestrator about to fan a goal out to subagents (the meta lane).
+    # This is the orchestrator-as-delegator trigger: govern the swarm/tranche spec
+    # (brief coherence, fan-out completeness, slicing stress-test, posture) BEFORE dispatch.
+    ("delegate", "warranted", [
+        r"\bdelegat",
+        r"\bsub-?agents?\b",
+        r"\bfan(?:ning)?[ -]out\b",
+        r"\bspawn\b",
+        r"\bbreak (this|it|the \w+) (down |up )?into\b",
+        r"\borchestrat",
+        r"\bparalleli[sz]e\b",
+        r"\btranche",
+        r"\bswarm\b",
+        r"\baudit .* across\b",
+        r"\b(decompos|divid)\w* (this|the|it|into)\b",
+    ], 0.80),
 ]
 
 # Posture toggle pattern (special — refreshes chamber disposition, not an arrow)
@@ -258,6 +275,7 @@ def _derive_target(arrow_key, raw_target):
         "counter": "pending_decision",
         "tom": "audience_shift",
         "citation_intel": "publication",
+        "delegate": "delegation_plan",
     }
     return target_map.get(arrow_key, "active_move")
 
@@ -322,6 +340,23 @@ LANE_DIRECTIVES = {
         "  - Is the content extractable / citation-ready for AI-search surfaces? (clear claims, "
         "named sources, clean structure, llms.txt / robots posture)\n"
         "  - Return a short readiness report; flag anything to fix before going public."
+    ),
+    "delegate": (
+        "You're about to fan this goal out to subagents — govern the dispatch as a coherent "
+        "swarm/tranche spec, not an ad-hoc spray:\n"
+        "  - tom each brief: every subagent brief must preserve the goal's centroid — no drift, "
+        "no softened constraint, no invented scope; state what each subagent must NOT do.\n"
+        "  - counter the slicing: attack your own decomposition — is this the right cut? what does "
+        "this fan-out structurally get WRONG or leave uncovered?\n"
+        "  - complement the fan-out: is the set complete — any load-bearing lane/subagent MISSING? "
+        "(and resist over-spawning decorative agents).\n"
+        "  - point, don't inscribe: each brief POINTS its subagent at the right surfaces/sources to "
+        "hydrate from — don't inline or dump content into the brief; keep briefs lean.\n"
+        "  - sequence + parallelize: make dependencies explicit; run independent briefs in PARALLEL, "
+        "serialize only true dependencies — state the dependency graph and where parallelism wins.\n"
+        "  - posture + ingest: give each subagent a DIRECT vs META scope so none overreach, and "
+        "metabolize shared context before handing it down (don't paste raw).\n"
+        "  Emit the dispatch as an explicit spec before spawning anything."
     ),
 }
 
