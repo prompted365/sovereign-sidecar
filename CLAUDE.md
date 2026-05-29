@@ -101,7 +101,7 @@ from each arrow's `SKILL.md`. The trailing `(arrow: …)` line is human-readable
 greppable, so a tool can still detect which lane fired. No API. No persistence. No
 second hook. Just a directive the model runs.
 
-### Quiver (Six Governance Arrows + Two Support Arrows)
+### Quiver (Seven Governance Arrows + Two Support Arrows)
 
 | Arrow | Stance | Fires | Returns | Council Resonance |
 |---|---|---|---|---|
@@ -111,10 +111,11 @@ second hook. Just a directive the model runs.
 | `/counter` | adversarial-falsifying | before move commits | attack arguments | #1 #12 #23 |
 | `/citation-intel` | readiness-check | before publication | readiness report | — |
 | `/posture` | contract-declaration | on `[Posture →]` toggle | posture contract | — |
+| `/delegate` | swarm-governing | before fan-out to subagents | governed swarm/tranche spec | #1 #3 #12 |
 | `/tactical-hydration` | discovery | at chamber fill | pointer basket | — |
 | `/consolidate` | packaging | at chamber fill | indexed dump | — |
 
-`/tactical-hydration` and `/consolidate` are not user-facing arrows. They fill the chamber. The user interacts with the six governance arrows; the support arrows are infrastructure. Router firing note: `/citation-intel` is intent-matched like the other four; `/posture` is detected as an explicit `[Posture →]` / `POSTURE:` toggle, not yet inferred from a "mutation under META" condition (chamber declares the bias; router implements toggle-detection only).
+`/tactical-hydration` and `/consolidate` are not user-facing arrows. They fill the chamber. The user interacts with the seven governance arrows; the support arrows are infrastructure. Router firing note: `/citation-intel` and `/delegate` are intent-matched like `/ingest` `/complement` `/counter` `/tom`; `/posture` is detected as an explicit `[Posture →]` / `POSTURE:` toggle, not yet inferred from a "mutation under META" condition (chamber declares the bias; router implements toggle-detection only).
 
 ### Metapairs
 

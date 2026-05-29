@@ -51,9 +51,14 @@ recipes end at *push/mutate*; the sidecar ends at *whether the move coheres*.
 | `/counter` | before a decision commits | the strongest case against it |
 | `/citation-intel` | before publication | extractability / readiness report |
 | `/posture` | on a `[Posture → …]` toggle | an explicit working-mode contract |
+| `/delegate` | before you fan out to subagents | a governed swarm spec — per-agent briefs, dependency graph, decomposition stress test |
 
 (`/tactical-hydration` and `/consolidate` are support arrows — they fill the chamber;
-you interact with the six above.)
+you interact with the seven above.)
+
+> `/delegate` is the arrow with measured proof: same prompt, same model, same isolation —
+> with the arrow active the agent names the cross-agent failure seams it otherwise ships.
+> See [`proof/delegation.md`](proof/delegation.md).
 
 ---
 
@@ -64,7 +69,7 @@ you interact with the six above.)
 2. **Register the hook** — copy the `UserPromptSubmit` block from
    `hooks/settings.json.template` into your `~/.claude/settings.json`, pointing at
    `hooks/sidecar-router.py`.
-3. **Verify** — `bash tests/smoke.sh` (zero-cost, no model calls). You should see `PASS=10 FAIL=0`.
+3. **Verify** — `bash tests/smoke.sh` (zero-cost, no model calls). You should see `PASS=13 FAIL=0`.
 
 The router is **fail-soft by design**: a missing chamber, bad stdin, or any exception
 emits empty output. Your prompts are never blocked.

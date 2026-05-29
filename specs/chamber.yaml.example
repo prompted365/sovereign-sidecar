@@ -1,8 +1,11 @@
 # Sovereign Sidecar — Chamber v0.1 Example
 #
 # This is a session-scoped pointer surface. The router (hooks/sidecar-router.py)
-# reads this file at every UserPromptSubmit and emits machine-legible KV signal
-# tags when arrow confidence exceeds disposition_bias.
+# reads this file at every UserPromptSubmit and injects the matched lane's PROTOCOL
+# as a readable directive — the model runs that lane inline — when arrow confidence
+# exceeds disposition_bias. (Earlier versions emitted a machine KV tag and relied on
+# a downstream hook; that consumer was never universal, so the model is now the
+# consumer and the directive carries the lane's actual reasoning.)
 #
 # Default discovery paths (router checks in order):
 #   1. $SIDECAR_CHAMBER (environment variable)
@@ -87,6 +90,13 @@ arrows:
     disposition_bias: 0.5
     fires: "before_mutation_under_meta"
     stance: "contract_declaration"
+
+  delegate:
+    pointer: "hooks/sidecar-router.py"   # directive lives in LANE_DIRECTIVES (no separate SKILL.md yet)
+    tom_briefing: "govern the swarm spec — fire before fanning a goal out to subagents"
+    disposition_bias: 0.5
+    fires: "before_fan_out"
+    stance: "swarm_governing"
 
 # ----------------------------------------------------------------------
 # Support arrows — not user-facing; fill the chamber
