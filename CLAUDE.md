@@ -140,7 +140,7 @@ Each persistence ask maps to exactly one Ubiquity primitive. The sidecar IS the 
 | Support skills (/tactical-hydration, /consolidate) | `skills/tactical-hydration/`, `skills/consolidate/` |
 | Quick-fire signal emission | folded into `hooks/sidecar-router.py` (emits `<sidecar/>` tags in `additionalContext`) |
 | Metapair registry | `specs/metapairs.md` |
-| Council resonance mapping | `references/council-resonance.md` *(planned — not yet written)* |
+| Council resonance mapping | `references/council-resonance.md` |
 
 ## Workspace Default Posture
 

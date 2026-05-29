@@ -103,4 +103,13 @@ your day-job stack doesn't have it.
 
 ---
 
-*Built by [Prompted LLC](https://promptedllc.com). Pre-release.*
+## License
+
+Source-available under the [Fair Use License](LICENSE.md): free to tinker with, learn
+from, run on your own rigs, fork, and contribute to. **Commercial use is welcome —
+permitted by agreement** with Prompted LLC. Reach out at **breyden@prompted.community**;
+the agreement exists to steward the project, not to gatekeep.
+
+---
+
+*Built by [Prompted LLC](https://promptedllc.com). Part of the Ubiquity ecosystem.*
