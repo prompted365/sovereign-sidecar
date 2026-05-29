@@ -69,7 +69,7 @@ you interact with the seven above.)
 2. **Register the hook** — copy the `UserPromptSubmit` block from
    `hooks/settings.json.template` into your `~/.claude/settings.json`, pointing at
    `hooks/sidecar-router.py`.
-3. **Verify** — `bash tests/smoke.sh` (zero-cost, no model calls). You should see `PASS=13 FAIL=0`.
+3. **Verify** — `bash tests/smoke.sh` (zero-cost, no model calls). You should see `PASS=14 FAIL=0`.
 
 The router is **fail-soft by design**: a missing chamber, bad stdin, or any exception
 emits empty output. Your prompts are never blocked.
