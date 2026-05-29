@@ -39,35 +39,42 @@ The router classifies the user message against the chamber's arrow fire conditio
 
 The router does NOT use an LLM for classification. It uses keyword/regex pattern matching against the chamber's fire conditions. This keeps cost at zero — the hook is a Python script, not a model call.
 
-## Quick-Fire Output
+## Lane Directive Output
 
-When an arrow is warranted (confidence > disposition_bias), the router emits a signal tag in its hook output:
+When an arrow is warranted (confidence > disposition_bias), the router injects the
+matched lane's **protocol as a readable directive** into its hook output. The model
+reads the directive and runs that lane inline — the router does not emit a machine
+tag and hope a downstream hook fires the arrow.
 
-```html
-<sidecar key="complement_due" target="commit_message" confidence="0.85" />
+```
+[sidecar · counter] An irreversible / hard-to-reverse decision looks imminent.
+Run the COUNTER lane inline — you are the genuine adversary, not a devil's advocate:
+  1. State the move in one sentence.
+  2. Name the single premise that, if false, makes the whole move wrong.
+  3. Build the strongest case it WILL fail (not "might") — cite evidence, or mark
+     "structural, no current evidence."
+  4. Verdict: HOLD / REVISE / PROCEED-WITH-AWARENESS. Do not soften to stay agreeable.
+  (arrow: counter_warranted · confidence 0.75 · chamber_bias 0.40)
 ```
 
 The hook output mechanism depends on the harness:
-- **Claude Code**: `hookSpecificOutput.additionalContext` carries the tag
-- **Grok**: hook stdout carries the tag  
-- **Generic**: stdout; the consuming harness must regex-match `<sidecar ... />`
+- **Claude Code**: `hookSpecificOutput.additionalContext` carries the directive
+- **Generic**: stdout; the consuming harness injects it into the model's context
 
-## Signal Tag Schema
+The trailing `(arrow: <key>_<verb> · …)` provenance line stays human-readable while
+remaining greppable, so a tool that still wants to detect which lane fired can do so
+without parsing a machine-only dict.
 
-```
-<sidecar
-  key="<arrow_name>_<trigger_verb>"    # e.g. "complement_due", "counter_warranted"
-  target="<what_to_examine>"           # e.g. "pr-description", "schema_change"
-  confidence="<0.0-1.0>"              # router's pattern-match confidence
-  chamber_bias="<0.0-1.0>"            # disposition_bias from chamber
-/>
-```
+## Why a directive, not a tag
 
-A downstream hook or the harness itself catches the tag and:
-1. Reads the arrow's `pointer` from the chamber
-2. Pulls context from the pointer target (bounded read)
-3. Fires the arrow skill with that context
-4. Returns the arrow's output to the human thread
+An earlier version emitted a KV tag (`<sidecar key="counter_warranted" .../>`) and
+relied on a downstream hook to read the chamber pointer and fire the arrow. Two
+problems: (1) that downstream consumer was never universal — without it, the tag did
+nothing, which is exactly why the sidecar felt inert; (2) a machine KV blob is not
+actionable by the model, and model-visible context should be human-readable text
+intended for the LLM, not an inter-extension dict. Injecting the lane protocol makes
+the **model** the consumer — no second hook required, and the arrow's actual
+reasoning lands in the thread instead of a tag nobody reads.
 
 ## What the Router Does NOT Do
 
@@ -75,7 +82,7 @@ A downstream hook or the harness itself catches the tag and:
 - Does not read skill bodies (reads chamber pointers only)
 - Does not persist state (session dies, chamber dies)
 - Does not block the primary work (parallel, non-blocking hook)
-- Does not fire arrows directly (emits signals; downstream hooks fire arrows)
+- Does not require a second hook to act (the directive makes the model run the lane inline)
 - Does not replace harness-native orchestration (wraps it with governance)
 
 ## Outpost Boundary (Zone-Aware Deferral)

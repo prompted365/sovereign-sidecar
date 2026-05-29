@@ -31,13 +31,20 @@ USER MESSAGE
   │     └─→ Router (hooks/sidecar-router.py — the hook IS the router)
   │           ├─ Reads CHAMBER (pointers + disposition + dynamic posture)
   │           ├─ Intent assessment → quiver arrow selection
-  │           └─ Quick-fire: <sidecar key="K" target="T" /> tags
-  │                → downstream hook catches regex
-  │                → pulls context from chamber pointer
-  │                → fires the arrow
+  │           └─ Injects the matched lane's PROTOCOL as a readable directive
+  │                → the model runs the lane inline (no downstream hook needed)
+  │                → lane terminates in a coherence read: ACT or REFUSE
   │
   └─→ Primary work (unimpeded, parallel)
 ```
+
+The model is the consumer. An earlier design emitted a machine KV tag
+(`<sidecar key="K" .../>`) and relied on a downstream hook to fire the arrow — but
+that consumer was never universal (so the tag did nothing, which is why the sidecar
+felt inert) and a KV blob is not LLM-actionable. Model-visible context must be
+human-readable text intended for the LLM, not an inter-extension dict (federation
+Tool Economics doctrine, point 4). Injecting the lane protocol makes the model run
+the lane; the arrow's reasoning lands in the thread.
 
 ### Outpost Boundary
 
@@ -74,15 +81,25 @@ chamber:
 
 Each arrow gets a /tom-compressed one-liner about what it means RIGHT NOW. The router reads ~200 tokens to know everything. Actual skill content lives at the pointer — pulled only when an arrow fires.
 
-### Quick-Fire Signal Tags
+### Lane Directives (the router speaks the protocol)
 
-```html
-<sidecar key="complement_due" target="pr-description" confidence="0.8" />
-<sidecar key="counter_warranted" target="architecture_decision" confidence="0.7" />
-<sidecar key="ingest_needed" target="external_api_docs" confidence="0.9" />
+When an arrow is warranted, the router injects the matched lane's compressed protocol
+as a readable directive the model acts on directly:
+
+```
+[sidecar · counter] An irreversible / hard-to-reverse decision looks imminent.
+Run the COUNTER lane inline — you are the genuine adversary, not a devil's advocate:
+  1. State the move in one sentence.
+  2. Name the single premise that, if false, makes the whole move wrong.
+  3. Build the strongest case it WILL fail (not "might") — cite evidence …
+  4. Verdict: HOLD / REVISE / PROCEED-WITH-AWARENESS.
+  (arrow: counter_warranted · confidence 0.75 · chamber_bias 0.40)
 ```
 
-Hook regex catches `<sidecar ... />`, extracts KV pairs, routes to the named arrow. No API. No persistence. Just text patterns hooks can parse.
+The directive bodies live in `hooks/sidecar-router.py` (`LANE_DIRECTIVES`), compressed
+from each arrow's `SKILL.md`. The trailing `(arrow: …)` line is human-readable but
+greppable, so a tool can still detect which lane fired. No API. No persistence. No
+second hook. Just a directive the model runs.
 
 ### Quiver (Six Governance Arrows + Two Support Arrows)
 

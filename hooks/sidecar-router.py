@@ -3,19 +3,25 @@
 Sovereign Sidecar Router (UserPromptSubmit hook)
 
 Reads the chamber (~/.sidecar/chamber.yaml or $SIDECAR_CHAMBER), pattern-matches
-the user message against arrow fire conditions, and emits HTML-tag-wrapped KV
-signal tags when confidence exceeds the disposition_bias threshold.
+the user message against arrow fire conditions, and — when confidence exceeds the
+disposition_bias threshold — injects a READABLE LANE DIRECTIVE that makes the model
+run that governance lane inline and return a small, envelope-shaped result.
+
+Why a directive, not a tag: an earlier version emitted a machine KV tag
+(<sidecar key="counter_warranted" .../>) and relied on a "downstream hook" to fire
+the arrow. That consumer was never universal, and the bare tag is not actionable by
+the model — model-visible context must be human-readable text intended for the LLM,
+not an inter-extension dict. Injecting the lane protocol directly makes the model
+the consumer: no second hook required, and the arrow's actual reasoning lands in the
+thread instead of a tag nobody reads.
 
 Discipline:
-- Stays OUT of user-visible noise: emits JSON for the harness, never prints to
-  stdout for the user thread directly. Signal tags ride inside additionalContext
-  so downstream hooks (or the consuming harness) can regex-match them.
-- Stays IN the thread legibly: tags use a stable schema
-  <sidecar key="K" target="T" confidence="C" chamber_bias="B" /> that any
-  downstream consumer can parse with one regex.
-- Zero LLM cost: pure pattern matching, no model calls.
-- Fail-soft: any exception is caught and an empty hook output is emitted so
-  the user prompt is never blocked.
+- Speaks to the model: additionalContext carries a readable directive (the compressed
+  lane protocol), with a short human-readable provenance footnote (arrow + confidence).
+- Zero LLM cost in the hook: pure pattern matching selects which lane to invite; the
+  lane itself runs in the model's normal turn (cost only when warranted).
+- Fail-soft: any exception is caught and an empty hook output is emitted so the user
+  prompt is never blocked.
 
 Hook contract (Claude Code):
 - Receives prompt JSON on stdin: {"prompt": "<user message>", ...}
@@ -269,21 +275,85 @@ def detect_posture_toggle(prompt):
 
 
 # ----------------------------------------------------------------------
-# Signal tag formatting
+# Lane directives — the router SPEAKS the lane protocol
 # ----------------------------------------------------------------------
+#
+# Each directive is a compressed form of the arrow's SKILL.md protocol. The
+# router injects the matching directive so the model runs that lane inline,
+# instead of emitting a KV tag and hoping a (never-universal) downstream hook
+# fires the arrow. The directive IS the consumer-activation surface.
 
-def format_signal_tag(arrow_key, trigger_verb, target, confidence, chamber_bias):
-    """Format a single <sidecar /> tag. Quiet, KV-shaped, parseable by one regex."""
+LANE_DIRECTIVES = {
+    "ingest": (
+        "External context is entering. Run the INGEST lane before you absorb it:\n"
+        "  1. Identify the structural pattern the source carries.\n"
+        "  2. Map it to our existing vocabulary, or name it cleanly.\n"
+        "  3. Declare an adoption stance: ADOPT / WRAP / WATCH / NO-OP.\n"
+        "  4. Note what you keep vs. strip, and why.\n"
+        "  Test: can you explain it WITHOUT the source's own words? If not, you cargo-culted "
+        "— re-metabolize before using it."
+    ),
+    "complement": (
+        "A move just landed. Run the COMPLEMENT lane inline:\n"
+        "  - Name the centroid (governing concern) and the active ray (what you just did).\n"
+        "  - Surface the single strongest MISSING complement — but only if it changes "
+        "implementation, governance, proof burden, a boundary, or what must happen next.\n"
+        "  - If nothing structural is missing, say \"current focus is sufficient\" and stop. "
+        "Do not invent decorative additions. Return a finding, not an essay."
+    ),
+    "counter": (
+        "An irreversible / hard-to-reverse decision looks imminent. Run the COUNTER lane inline "
+        "— you are the genuine adversary, not a devil's advocate:\n"
+        "  1. State the move in one sentence.\n"
+        "  2. Name the single premise that, if false, makes the whole move wrong.\n"
+        "  3. Build the strongest case it WILL fail (not \"might\") — cite evidence, or mark "
+        "\"structural, no current evidence.\"\n"
+        "  4. Verdict: HOLD / REVISE / PROCEED-WITH-AWARENESS. Do not soften the argument to stay agreeable."
+    ),
+    "tom": (
+        "An audience / expression shift is in play. Run the TOM lane:\n"
+        "  - Extract the centroid (invariant meaning) of the source.\n"
+        "  - Re-express it for the target audience WITHOUT softening warnings, leaking "
+        "internal-only detail, inventing capabilities, or promoting adjacent work to launch-scope.\n"
+        "  - The posture serves the centroid, not the other way around."
+    ),
+    "citation_intel": (
+        "Publication looks imminent. Run the CITATION-INTEL readiness check before you publish:\n"
+        "  - Is the content extractable / citation-ready for AI-search surfaces? (clear claims, "
+        "named sources, clean structure, llms.txt / robots posture)\n"
+        "  - Return a short readiness report; flag anything to fix before going public."
+    ),
+}
+
+
+def build_lane_directive(arrow_key, trigger_verb, confidence, bias):
+    """Build a readable lane directive. Returns str, or None for unknown arrows.
+
+    The trailing provenance line stays human-readable but keeps the
+    `<arrow>_<verb>` token so a downstream tool (or a smoke test) can still
+    detect which lane fired without parsing a machine-only dict.
+    """
+    body = LANE_DIRECTIVES.get(arrow_key)
+    if not body:
+        return None
+    label = arrow_key.replace("_", "-")
     return (
-        f'<sidecar key="{arrow_key}_{trigger_verb}" '
-        f'target="{target}" '
-        f'confidence="{confidence:.2f}" '
-        f'chamber_bias="{chamber_bias:.2f}" />'
+        f"[sidecar · {label}] {body}\n"
+        f"  (arrow: {arrow_key}_{trigger_verb} · confidence {confidence:.2f} "
+        f"· chamber_bias {bias:.2f})"
     )
 
 
-def format_posture_tag(domain, depth):
-    return f'<sidecar key="posture_shift" target="{domain}/{depth}" confidence="1.00" chamber_bias="1.00" />'
+def build_posture_directive(domain, depth):
+    return (
+        f"[sidecar · posture] Posture shift to {domain}/{depth} detected — re-declare the "
+        f"working-mode contract:\n"
+        f"  - META = read-only: no file edits, no commits, no API writes. If a step would mutate "
+        f"state, pause and ask.\n"
+        f"  - DIRECT = mutate only the scoped surface, then run the relevant validation before "
+        f"claiming done.\n"
+        f"  (arrow: posture_shift · target {domain}/{depth})"
+    )
 
 
 # ----------------------------------------------------------------------
@@ -337,27 +407,31 @@ def main():
         chamber_path = find_chamber_path()
         chamber = load_chamber(chamber_path) if chamber_path else None
 
-        tags = []
+        directives = []
 
-        # Posture toggle takes precedence (refreshes disposition; downstream
-        # consumer should refill chamber on this signal)
+        # Posture toggle takes precedence — re-declare the working-mode contract.
         posture = detect_posture_toggle(prompt)
         if posture:
-            tags.append(format_posture_tag(*posture))
+            directives.append(build_posture_directive(*posture))
 
-        # Arrow firing
+        # Arrow firing: each warranted arrow injects its lane protocol as a directive.
         if chamber:
             fires = assess_intent(prompt, chamber)
             for arrow_key, trigger_verb, target, confidence, bias in fires:
-                tags.append(format_signal_tag(arrow_key, trigger_verb, target, confidence, bias))
+                directives.append(build_lane_directive(arrow_key, trigger_verb, confidence, bias))
 
-        if not tags:
+        directives = [d for d in directives if d]
+        if not directives:
             return
 
-        # Emit. The tags ride inside additionalContext so the consuming harness
-        # (or a downstream hook) can regex-extract them. They are NOT printed
-        # to user-visible stdout.
-        additional_context = "[sidecar] " + " ".join(tags)
+        # Emit. The directives ride inside additionalContext as readable instructions
+        # the model acts on directly — it runs each lane inline before its main reply.
+        plural = "lane" if len(directives) == 1 else "lanes"
+        header = (
+            f"[Sovereign Sidecar] Your message activated {len(directives)} governance "
+            f"{plural}. Run each inline before your main response, then continue:"
+        )
+        additional_context = header + "\n\n" + "\n\n".join(directives)
         hook_output = {
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",

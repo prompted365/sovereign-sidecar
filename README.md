@@ -20,17 +20,26 @@ the vehicle you already drive.
 
 On every prompt, a single fail-soft `UserPromptSubmit` hook reads a lightweight
 **chamber** (~200 tokens of pointers + disposition), pattern-matches your message
-against a **quiver** of governance arrows, and — only when warranted — emits a quiet
-signal tag your stack can act on. Zero LLM cost. Zero blocking. Pure text patterns.
+against a **quiver** of governance arrows, and — only when warranted — injects the
+matched lane's **protocol as a readable directive**, so your agent runs that lane
+inline *before* it acts. The intent-match is zero-LLM-cost text patterns; the lane
+itself runs in the turn you're already paying for, only when governance is warranted.
 
 ```
 USER MESSAGE
   ├─→ sidecar router (UserPromptSubmit hook, parallel, non-blocking)
   │     ├─ reads CHAMBER (pointers + disposition + current posture)
   │     ├─ intent match → arrow selection
-  │     └─ quick-fire: <sidecar key="K" target="T" confidence="C" /> tags
+  │     └─ injects the lane directive — the model runs the lane inline:
+  │          ingest / tom / complement / counter → coherence read → ACT or REFUSE
   └─→ your primary work (unimpeded, in parallel)
 ```
+
+The model is the consumer: the directive carries the lane's actual protocol, so the
+lane's reasoning lands in your thread — not a tag your stack has to wire up. The
+terminal of a lane pass isn't "proceed"; it's a coherence read that ends in **act or
+refuse**. That refuse-path is the structural difference from tool-chain orchestration:
+recipes end at *push/mutate*; the sidecar ends at *whether the move coheres*.
 
 ### The quiver
 

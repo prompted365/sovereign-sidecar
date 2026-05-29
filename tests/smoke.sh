@@ -52,12 +52,14 @@ echo "router:  $ROUTER"
 echo "chamber: $CHAMBER"
 echo ""
 
-check "complement"     '{"prompt":"ok this is done and shipped — what did we miss?"}' 'complement_due'
-check "counter"        '{"prompt":"should we lock in this schema change?"}'           'counter_warranted'
-check "ingest"         '{"prompt":"look at this https://example.com API docs"}'       'ingest_needed'
-check "citation-intel" '{"prompt":"lets publish this and make it public"}'            'citation_intel_due'
-check "tom"            '{"prompt":"compress this for the board"}'                     'tom_due'
-check "posture-toggle" '{"prompt":"[Posture → OPS/DIRECT] go"}'                       'posture_shift'
+# Each governance arrow must now SPEAK its lane protocol (readable directive),
+# not emit a bare KV tag. Assert the distinctive lane phrase is injected.
+check "complement"     '{"prompt":"ok this is done and shipped — what did we miss?"}' 'COMPLEMENT lane'
+check "counter"        '{"prompt":"should we lock in this schema change?"}'           'COUNTER lane'
+check "ingest"         '{"prompt":"look at this https://example.com API docs"}'       'INGEST lane'
+check "citation-intel" '{"prompt":"lets publish this and make it public"}'            'CITATION-INTEL'
+check "tom"            '{"prompt":"compress this for the board"}'                     'TOM lane'
+check "posture-toggle" '{"prompt":"[Posture → OPS/DIRECT] go"}'                       'Posture shift to OPS/DIRECT'
 check "no-match"       '{"prompt":"what time is it"}'                                 ''
 check "fail-soft"      'not json at all'                                             ''
 
