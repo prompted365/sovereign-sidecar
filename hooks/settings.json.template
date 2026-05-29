@@ -1,0 +1,31 @@
+{
+  "_comment_": "Sovereign Sidecar — UserPromptSubmit hook registration template.",
+  "_usage_": "Copy the relevant block into ~/.claude/settings.json (user scope) or .claude/settings.json (project scope). The SIDECAR_ROOT path should resolve to wherever the sidecar domain is installed; default assumes the canonical_developer install.",
+  "_chamber_": "The hook discovers the chamber via $SIDECAR_CHAMBER env var, ~/.sidecar/chamber.yaml, ~/.claude/sidecar/chamber.yaml, or .sidecar/chamber.yaml — copy specs/chamber.yaml.example to one of those paths and edit disposition_bias to taste.",
+  "_failsoft_": "The hook is fail-soft by design: missing chamber, bad stdin, or any exception emits empty hook output. User prompts are never blocked.",
+
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/YOU/canonical/canonical_developer/sovereign-sidecar/hooks/sidecar-router.py"
+          }
+        ]
+      }
+    ]
+  },
+
+  "_alt_env_var_form_": {
+    "_comment_": "If SIDECAR_ROOT is exported in your shell profile, you can use an env-var form. Note: Claude Code does not expand env vars in command strings; the command must be a literal path or a wrapper script that resolves it.",
+    "_wrapper_example_": "Create ~/.claude/cgg-runtime/scripts/sidecar-router-wrap.sh containing: #!/bin/bash; exec python3 $SIDECAR_ROOT/hooks/sidecar-router.py",
+    "_then_register_": "command: ~/.claude/cgg-runtime/scripts/sidecar-router-wrap.sh"
+  },
+
+  "_downstream_consumer_pattern_": {
+    "_comment_": "A downstream hook (or the consuming harness itself) can extract signal tags from the additionalContext that the sidecar router emits. Stable schema: <sidecar key=\"K\" target=\"T\" confidence=\"C\" chamber_bias=\"B\" />",
+    "_regex_": "<sidecar\\s+key=\"([^\"]+)\"\\s+target=\"([^\"]+)\"\\s+confidence=\"([0-9.]+)\"\\s+chamber_bias=\"([0-9.]+)\"\\s*/>",
+    "_example_extractor_": "Any UserPromptSubmit hook registered AFTER sidecar-router.py can scan stdin for the regex above and route to the named arrow."
+  }
+}

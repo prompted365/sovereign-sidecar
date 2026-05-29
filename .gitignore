@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Local chamber instances (the example is tracked; user-filled chambers are local)
+chamber.yaml
+.sidecar/
+*.local.yaml
+
+# Editor / OS noise
+*.swp
+.idea/
+.vscode/

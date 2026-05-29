@@ -1,0 +1,109 @@
+# Sovereign Sidecar — Chamber v0.1 Example
+#
+# This is a session-scoped pointer surface. The router (hooks/sidecar-router.py)
+# reads this file at every UserPromptSubmit and emits machine-legible KV signal
+# tags when arrow confidence exceeds disposition_bias.
+#
+# Default discovery paths (router checks in order):
+#   1. $SIDECAR_CHAMBER (environment variable)
+#   2. ~/.sidecar/chamber.yaml
+#   3. ~/.claude/sidecar/chamber.yaml
+#   4. .sidecar/chamber.yaml (project-local)
+#
+# Copy this file to one of those locations and edit the disposition_bias
+# values + the disposition free-text to shape arrow firing for the current
+# session.
+
+schema_version: "0.1"
+
+# Current session posture. Updates on [Posture → X/Y] toggle detected by router.
+# Format: <ENG|OPS>/<DIRECT|META>
+posture: "ENG/DIRECT"
+
+# /tom-compressed session trajectory. Tells the quiver what it's biased toward,
+# not what to do. Refreshes on session start and posture shift only — not on
+# every message.
+disposition: |
+  implementation-heavy; bias complement+counter;
+  suppress ingest (context stable);
+  publication not imminent (citation-intel low priority)
+
+# ----------------------------------------------------------------------
+# Arrows — user-facing governance primitives
+# ----------------------------------------------------------------------
+#
+# Each arrow has:
+#   pointer        — path to skill body (resolved relative to sidecar root)
+#   tom_briefing   — one-line description of when this arrow should fire NOW
+#   disposition_bias — threshold (0.0-1.0); arrow fires when router confidence > bias
+#   fires          — semantic trigger condition
+#   stance         — arrow's adversarial / cooperative / metabolizing posture
+#
+# Tune disposition_bias values to match the current session's needs:
+#   0.0-0.3 = aggressive (fire easily; useful when arrow is currently load-bearing)
+#   0.4-0.6 = balanced (fire on moderate evidence)
+#   0.7-0.9 = conservative (fire only on strong evidence; useful when arrow noise dominates)
+#   1.0     = suppressed (never fire this session)
+
+arrows:
+  ingest:
+    pointer: "skills/ingest/SKILL.md"
+    tom_briefing: "metabolize — fire when external context enters the session"
+    disposition_bias: 0.2
+    fires: "before_context_enters"
+    stance: "metabolize"
+
+  tom:
+    pointer: "skills/tom/SKILL.md"
+    tom_briefing: "centroid-preserving re-expression — fire before publication or audience shift"
+    disposition_bias: 0.3
+    fires: "before_expression"
+    stance: "centroid_preserving"
+
+  complement:
+    pointer: "skills/complement/SKILL.md"
+    tom_briefing: "topological closure — fire when a move lands and exposed surfaces aren't named"
+    disposition_bias: 0.7
+    fires: "after_move_lands"
+    stance: "cooperative_topological"
+
+  counter:
+    pointer: "skills/counter/SKILL.md"
+    tom_briefing: "adversarial falsification — fire before committing to an architecture or irreversible decision"
+    disposition_bias: 0.4
+    fires: "before_move_commits"
+    stance: "adversarial_falsifying"
+
+  citation_intel:
+    pointer: "skills/citation-intel/SKILL.md"
+    tom_briefing: "publication readiness — fire before publishing content to AI-searchable surfaces"
+    disposition_bias: 0.1
+    fires: "before_publication"
+    stance: "readiness_check"
+
+  posture:
+    pointer: "skills/posture/SKILL.md"
+    tom_briefing: "working-mode contract — fire when next move could mutate state and posture is META"
+    disposition_bias: 0.5
+    fires: "before_mutation_under_meta"
+    stance: "contract_declaration"
+
+# ----------------------------------------------------------------------
+# Support arrows — not user-facing; fill the chamber
+# ----------------------------------------------------------------------
+
+support:
+  tactical_hydration:
+    pointer: "skills/tactical-hydration/SKILL.md"
+    role: "discover pointer targets at session start"
+
+  consolidate:
+    pointer: "skills/consolidate/SKILL.md"
+    role: "package discovered targets into chamber-consumable form"
+
+# ----------------------------------------------------------------------
+# Fill provenance
+# ----------------------------------------------------------------------
+
+refreshed_at: null               # ISO timestamp of last fill; set by fill protocol
+fill_source: null                # session_start | posture_shift | manual
