@@ -40,6 +40,57 @@ import sys
 from pathlib import Path
 
 # ----------------------------------------------------------------------
+# Mute contract — two-source, OR-merged at read time
+# ----------------------------------------------------------------------
+#
+# A mechanic (arrow-key or hook-event) is muted if it appears in EITHER
+#   (a) env var SIDECAR_MUTE="comma,separated,keys" (case-insensitive, trimmed), OR
+#   (b) the chamber's top-level `muted:` list.
+# The two sources are UNIONed. Keys are arrow-keys (ingest, complement, counter, tom,
+# citation_intel, delegate, preflight) AND/OR hook-event-names (PreToolUse, PostToolUse,
+# SubagentStop, UserPromptSubmit). Hyphen/underscore aliasing is normalized. Special token
+# "all" mutes everything; "all-repo-hooks" expands to the three repo-state hook events.
+# Fail-soft: any exception → empty set → nothing muted → the arrow/hook fires (the product
+# never silently breaks because of a malformed mute spec). A muted mechanic emits no stdout,
+# so no fire-receipt line is appended — which is exactly how an ablation is ground-truthed.
+
+_ALL_KEYS = {
+    "ingest", "complement", "counter", "tom", "citation_intel", "delegate", "preflight",
+    "pretooluse", "posttooluse", "subagentstop", "userpromptsubmit",
+}
+_REPO_HOOK_KEYS = {"pretooluse", "posttooluse", "subagentstop"}
+
+
+def _muted_set(chamber):
+    """Return the set of normalized muted keys from env + chamber. Fail-soft → empty set."""
+    try:
+        s = set()
+        env = os.environ.get("SIDECAR_MUTE", "")
+        for t in env.split(","):
+            t = t.strip().lower().replace("-", "_")
+            if t:
+                s.add(t)
+        if chamber:
+            for t in (chamber.get("muted") or []):
+                s.add(str(t).strip().lower().replace("-", "_"))
+        if "all" in s:
+            s |= set(_ALL_KEYS)
+        if "all_repo_hooks" in s:
+            s |= set(_REPO_HOOK_KEYS)
+        return s
+    except Exception:
+        return set()
+
+
+def _is_muted(key, muted):
+    """True if `key` (normalized) is in the muted set. Fail-soft → not muted."""
+    try:
+        return key.strip().lower().replace("-", "_") in muted
+    except Exception:
+        return False
+
+
+# ----------------------------------------------------------------------
 # Chamber loading
 # ----------------------------------------------------------------------
 
@@ -111,6 +162,28 @@ def _minimal_yaml_parse(path):
             continue
         indent = len(line) - len(line.lstrip(" "))
 
+        # Top-level `muted:` list — inline [a, b] form OR following `- item` lines.
+        if indent == 0 and stripped.startswith("muted:"):
+            current_section = "muted"
+            current_arrow = None
+            _, _, inline = stripped.partition(":")
+            inline = inline.strip()
+            muted_items = []
+            if inline.startswith("[") and inline.endswith("]"):
+                for tok in inline[1:-1].split(","):
+                    tok = tok.strip().strip('"').strip("'")
+                    if tok:
+                        muted_items.append(tok)
+            result["muted"] = muted_items
+            continue
+
+        # Following `- item` lines for a top-level `muted:` block.
+        if current_section == "muted" and indent >= 2 and stripped.startswith("-"):
+            item = stripped[1:].strip().strip('"').strip("'")
+            if item:
+                result.setdefault("muted", []).append(item)
+            continue
+
         if indent == 0 and ":" in line:
             key, _, val = stripped.partition(":")
             key = key.strip()
@@ -118,7 +191,10 @@ def _minimal_yaml_parse(path):
             if key in ("arrows", "support"):
                 current_section = key
                 current_arrow = None
-            elif current_section is None:
+            else:
+                # Any other top-level key ends the current section and is stored as a scalar.
+                current_section = None
+                current_arrow = None
                 result[key] = val if val else None
         elif indent == 2 and stripped.endswith(":") and current_section in ("arrows", "support"):
             current_arrow = stripped[:-1]
@@ -207,6 +283,9 @@ PATTERN_TABLE = [
         r"\bparalleli[sz]e\b",
         r"\btranche",
         r"\bswarm\b",
+        r"\b(each|every|per)[- ]agent\b",
+        r"\b(split|divide|hand) (this |the goal |it )?(off |out )?(to|across|among) (\d+ |multiple |several )?(agents?|workers?)\b",
+        r"\bdispatch (to |the )?(agents?|swarm|subagents?)\b",
         # NOTE (tic 308): bare decomposition verbs ("break X into", "audit .* across",
         # "decompose this") were REMOVED — they over-fired the full swarm directive on
         # ordinary refactors ("break this function into smaller helpers"). delegate now
@@ -226,11 +305,13 @@ PATTERN_TABLE = [
         r"\bgo ahead\b",
         r"\bship it\b",
         r"\bsend it\b",
-        r"\b(patch|fix|wire up|implement|build|run|clean up) (this|it|the \w+)\b",
+        r"\b(patch|fix|wire up|implement|build|run|clean up|update|change|modify|edit|migrate|drop|delete|rewrite) (this|it|the \w+)\b",
         r"\brefactor\b",
         r"\bget (this|it|the repo) (ready|launch[- ]?ready|production[- ]?ready)\b",
         r"\b(deploy|merge|push) (this|it|the \w+|to)\b",
         r"\brun (the )?(migration|deploy|release|build)\b",
+        r"\b(insert|update|write) (into |to )?(the )?\w*(ledger|charge|refund|payment|payout|balance|transaction)s?\b",
+        r"\b(add|wire) (a |another )?(insert|update|write|call site)\b",
     ], 0.80),
 ]
 
@@ -255,8 +336,13 @@ def assess_intent(prompt, chamber):
 
     arrows = chamber.get("arrows", {}) or {}
     fires = []
+    muted = _muted_set(chamber)
 
     for arrow_key, trigger_verb, patterns, base_confidence in PATTERN_TABLE:
+        # Mute honor-site #1: drop a muted arrow before any pattern matching so no directive
+        # is built (no stdout → no fire-receipt → ablation is ground-truthed by absence).
+        if _is_muted(arrow_key, muted):
+            continue
         # Map snake_case arrow_key to chamber key (citation_intel → citation_intel)
         chamber_arrow = arrows.get(arrow_key, {})
         bias_raw = chamber_arrow.get("disposition_bias", 0.5)
@@ -338,83 +424,136 @@ LANE_DIRECTIVES = {
     "ingest": (
         "External context is entering. Run the INGEST lane before you absorb it:\n"
         "  1. Identify the structural pattern the source carries.\n"
-        "  2. Map it to our existing vocabulary, or name it cleanly.\n"
-        "  3. Declare an adoption stance: ADOPT / WRAP / WATCH / NO-OP.\n"
-        "  4. Note what you keep vs. strip, and why.\n"
-        "  Test: can you explain it WITHOUT the source's own words? If not, you cargo-culted "
-        "— re-metabolize before using it."
+        "  2. grep our codebase for the vocabulary this source uses (its key terms, type names, "
+        "function names) — list every existing call site or doc that already names this pattern, so "
+        "you map to what exists instead of duplicating it. If zero hits, name the pattern cleanly as net-new.\n"
+        "  3. Declare an adoption stance: ADOPT / WRAP / WATCH / NO-OP — and for WRAP/ADOPT, name the "
+        "exact file(s) the adopted pattern will touch.\n"
+        "  4. Emit a two-column keep/strip list: every primitive you KEEP vs. every one you STRIP, "
+        "with a one-clause why per row.\n"
+        "  Anti-cargo-cult test: re-state the metabolized pattern using ONLY the vocabulary surfaced "
+        "by your grep in step 2 (or your clean new names) — zero of the source's own terms. If you "
+        "can't, you cargo-culted; re-metabolize before using it."
     ),
     "complement": (
         "A move just landed. Run the COMPLEMENT lane inline:\n"
-        "  - Name the centroid (governing concern) and the active ray (what you just did).\n"
-        "  - Surface the single strongest MISSING complement — but only if it changes "
-        "implementation, governance, proof burden, a boundary, or what must happen next.\n"
-        "  - If nothing structural is missing, say \"current focus is sufficient\" and stop. "
-        "Do not invent decorative additions. Return a finding, not an essay."
+        "  1. Name the centroid (governing concern) and the active ray (what you just did).\n"
+        "  2. Breadth sweep — grep the repo for every OTHER surface that shares this move's "
+        "invariant, not just its imports: peer files in the same directory, sibling call sites of "
+        "the same function/table/endpoint, and semantically-coupled twins (e.g. if you touched "
+        "charge.ts, search for refund.ts / void.ts; if you touched one writer of a constraint, find "
+        "the other writers). List each hit you found and whether the same complement applies there.\n"
+        "  3. Surface the single strongest MISSING complement — but only if it changes "
+        "implementation, governance, proof burden, a boundary, or what must happen next. A sibling "
+        "from step 2 that needs the same change IS that complement.\n"
+        "  4. If the sweep is clean and nothing structural is missing, say \"current focus is "
+        "sufficient — swept N peers/siblings, none coupled\" and stop. Do not invent decorative "
+        "additions. Return a finding, not an essay."
     ),
     "counter": (
         "An irreversible / hard-to-reverse decision looks imminent. Run the COUNTER lane inline "
         "— you are the genuine adversary, not a devil's advocate:\n"
         "  1. State the move in one sentence.\n"
         "  2. Name the single premise that, if false, makes the whole move wrong.\n"
-        "  3. Build the strongest case it WILL fail (not \"might\") — cite evidence, or mark "
-        "\"structural, no current evidence.\"\n"
-        "  4. Verdict: HOLD / REVISE / PROCEED-WITH-AWARENESS. Do not soften the argument to stay agreeable."
+        "  3. Falsify it with evidence, don't assert it: go find the disconfirming fact. grep/read "
+        "the actual code, data, or call sites the premise depends on (the table the lock granularity "
+        "assumes, the call sites that share the contract you're changing, the config that sets the "
+        "threshold) and quote what you found. Build the strongest case it WILL fail (not \"might\") "
+        "from that quoted evidence; only if the search returns nothing may you mark \"structural — no "
+        "current evidence,\" and say what you searched.\n"
+        "  4. Enumerate the blast radius: list every other surface that depends on this premise being "
+        "true (other call sites, sibling files, downstream consumers) so the cost of being wrong is "
+        "named, not guessed.\n"
+        "  5. Verdict: HOLD / REVISE / PROCEED-WITH-AWARENESS. Do not soften the argument to stay agreeable."
     ),
     "tom": (
         "An audience / expression shift is in play. Run the TOM lane:\n"
-        "  - Extract the centroid (invariant meaning) of the source.\n"
-        "  - Re-express it for the target audience WITHOUT softening warnings, leaking "
-        "internal-only detail, inventing capabilities, or promoting adjacent work to launch-scope.\n"
-        "  - The posture serves the centroid, not the other way around."
+        "  1. Extract the centroid (invariant meaning) of the source in one sentence.\n"
+        "  2. Before re-expressing, enumerate the source's load-bearing constraints — list EVERY "
+        "warning, unresolved risk, scope boundary, and concrete identifier (file path, route, "
+        "function, capability) the source actually states. This is your invariant set.\n"
+        "  3. Re-express for the target audience.\n"
+        "  4. Diff the re-expression against the step-2 list: confirm each enumerated item survives "
+        "unsoftened, and confirm you introduced ZERO capability/path/route/name not present in step "
+        "2. Emit the result as a SURVIVED / SOFTENED / DROPPED / INVENTED ledger — one row per item.\n"
+        "  Any SOFTENED, DROPPED, or INVENTED row is a centroid violation: keep the centroid intact "
+        "and trim register elsewhere, then re-diff."
     ),
     "citation_intel": (
-        "Publication looks imminent. Run the CITATION-INTEL readiness check before you publish:\n"
-        "  - Is the content extractable / citation-ready for AI-search surfaces? (clear claims, "
-        "named sources, clean structure, llms.txt / robots posture)\n"
-        "  - Return a short readiness report; flag anything to fix before going public."
+        "Publication looks imminent. Run the CITATION-INTEL readiness check before you publish — "
+        "produce findings from actual inspection, not assertions:\n"
+        "  1. EXTRACT the single most extractable claim and token-estimate the draft (words ÷ 0.75). "
+        "Confirm the claim sits in the first 500 tokens — quote the sentence and its position; if "
+        "past 500, flag it.\n"
+        "  2. SCAN entities: list every proper noun + concrete stat in the draft (need ≥3). If fewer, "
+        "the piece is too abstract to be cited — flag it.\n"
+        "  3. AUDIT the site AI-access stack by actually reading the files — do not assume:\n"
+        "     - read robots.txt and list which AI crawlers are explicitly allowed vs missing (GPTBot, "
+        "ClaudeBot, PerplexityBot, anthropic-ai, Google-Extended, OAI-SearchBot, Meta-ExternalAgent)\n"
+        "     - check llms.txt exists, is current, and lists this article (grep the article slug in it)\n"
+        "     - confirm llms.txt Content-Type is text/plain; charset=utf-8\n"
+        "  4. GENERATE 2-3 FAQ questions answerable from the body (answers must carry the primary "
+        "claim, no new claims), and assign schema by type (BIZ → BlogPosting+FAQ / INFRA → "
+        "+speakable / CENTROID → Article+mentions+FAQ).\n"
+        "  Return a per-check readiness report with status + one concrete action item per failure. "
+        "Each line must reference what you actually read, not 'looks fine'."
     ),
     "delegate": (
         "You're about to fan this goal out to subagents — govern the dispatch as a coherent "
         "swarm/tranche spec, not an ad-hoc spray:\n"
-        "  - tom each brief: every subagent brief must preserve the goal's centroid — no drift, "
-        "no softened constraint, no invented scope; state what each subagent must NOT do. "
-        "Emit each brief as ITS OWN block under a named heading (SA-N / A-N / T-N / Agent-N — "
-        "your choice of label — but DISCRETE per-agent blocks, NOT a single table row per agent.)\n"
-        "  - counter the slicing: attack your own decomposition — is this the right cut? what does "
-        "this fan-out structurally get WRONG or leave uncovered? Emit a section titled literally "
-        "**Decomposition Stress Test** that names 3+ structural failure modes of THIS slice "
-        "(seam gaps between agents, blind spots a peer agent's scope would swallow, where the cut "
-        "leaks at runtime). Out-of-scope honesty is NOT stress-testing. Boundary hygiene is NOT "
-        "stress-testing. Name what the chosen slice GETS WRONG, not what it correctly excludes.\n"
-        "  - verify, don't trust 'done': bounded subagents return \"done\" for work that silently "
-        "failed — their scoped context can't see the cross-cutting inconsistency a peer would catch. "
-        "The synthesis contract must state how the parent INDEPENDENTLY verifies each subagent's "
-        "result (against sibling output, source data, or a counter-check); a \"done\" report is "
-        "necessary, NOT sufficient.\n"
+        "  - map the seam surface FIRST (concrete): before writing briefs, grep the goal's shared "
+        "invariants across the repo — run grep -rniE on the cross-cutting concepts (e.g. "
+        "ledger|charge|refund|payment|auth|schema|migration) and LIST which files touch each. The "
+        "seams live where two agents' scopes both land on the same listed file/invariant. You cannot "
+        "stress-test a decomposition you have not enumerated.\n"
+        "  - tom each brief: every subagent brief must preserve the goal's centroid — no drift, no "
+        "softened constraint, no invented scope; state what each subagent must NOT do. Emit each "
+        "brief as ITS OWN block under a named heading (SA-N / A-N / T-N / Agent-N) — DISCRETE "
+        "per-agent blocks, NOT a single table row per agent.\n"
+        "  - counter the slicing: emit a section titled literally **Decomposition Stress Test** "
+        "naming 3+ structural failure modes of THIS cut, each anchored to a file/invariant from your "
+        "seam grep (seam gaps between agents, blind spots a peer agent's scope would swallow, runtime "
+        "leaks at composition). Out-of-scope honesty and boundary hygiene are NOT stress-testing — "
+        "name what the chosen slice GETS WRONG.\n"
+        "  - verify, don't trust 'done': the synthesis contract must name HOW the parent "
+        "independently verifies each subagent's result — re-run against source / spot-check N rows vs "
+        "source / cross-validate with a sibling / counter-check probe. 'Review for quality' is "
+        "trusting the subagent's framing, not verification. A \"done\" report is necessary, NOT "
+        "sufficient.\n"
         "  - complement the fan-out: is the set complete — any load-bearing lane/subagent MISSING? "
         "(and resist over-spawning decorative agents).\n"
         "  - point, don't inscribe: each brief POINTS its subagent at the right surfaces/sources to "
-        "hydrate from — don't inline or dump content into the brief; keep briefs lean.\n"
-        "  - sequence + parallelize: make dependencies explicit; run independent briefs in PARALLEL, "
-        "serialize only true dependencies — state the dependency graph and where parallelism wins.\n"
-        "  - posture + ingest: give each subagent a DIRECT vs META scope so none overreach, and "
-        "metabolize shared context before handing it down (don't paste raw).\n"
-        "  Emit the dispatch as an explicit spec before spawning anything."
+        "hydrate from (path + purpose line) — don't inline or dump content.\n"
+        "  - sequence + parallelize: state the dependency graph explicitly; run independent briefs in "
+        "PARALLEL, serialize only true dependencies and name the handoff.\n"
+        "  - posture + ingest: give each subagent a DIRECT vs META scope so none overreach; /ingest "
+        "shared context once at the parent and point subagents at the metabolized form.\n"
+        "  Emit the dispatch as an explicit spec (Decomposition Stress Test FIRST, then briefs, "
+        "dependency graph, synthesis contract) before spawning anything."
     ),
     "preflight": (
-        "Operator momentum detected — a mutation may be imminent. Run the PREFLIGHT lane "
-        "BEFORE you touch the repo. Produce a mutation receipt:\n"
+        "Operator momentum detected — a mutation may be imminent. Run the PREFLIGHT lane BEFORE you "
+        "touch the repo. The receipt is necessary but NOT sufficient: a clean receipt that only "
+        "inspected this file misses sibling writers of the same invariant. Produce a mutation receipt "
+        "AND enumerate:\n"
         "  - intended action (one line)\n"
         "  - target files / surfaces\n"
+        "  - invariant at risk + the concrete token it is keyed to (the table / contract / symbol the "
+        "change writes)\n"
+        "  - OTHER writers of that invariant across the WHOLE repo — run the search now, list "
+        "path:line for each. Use grep -rn for the mutation pattern (INSERT/UPDATE/insert(/update( "
+        "etc.) AND a separate semantic-sibling pass on the concept word (charge / refund / payout / "
+        "ledger) to catch coupled files that share the invariant with NO import edge. A list of one "
+        "means you under-searched.\n"
+        "  - per-sibling reconciliation: for each writer found, does this change keep its copy of the "
+        "invariant true, or must it change too?\n"
         "  - repo evidence actually inspected (read it — don't assume)\n"
-        "  - invariant at risk (what must stay true through the change)\n"
-        "  - validation command (how you'll prove the change is safe)\n"
-        "  - rollback path (how to undo)\n"
+        "  - validation command that catches breakage at ALL sites; rollback path (explicit steps)\n"
         "  - verdict: PROCEED / HOLD / ASK\n"
-        "  HOLD if blast radius is unnamed; ASK if an invariant is unclear; PROCEED only when "
-        "all six lines are real, not placeholders. If nothing is actually about to mutate, say "
-        "\"no mutation pending\" and stop — don't manufacture ceremony."
+        "  HOLD if any sibling writer is unenumerated or unreconciled; ASK if the invariant token is "
+        "unclear; PROCEED only when the writer list is complete and every line is real, not a "
+        "placeholder. If nothing is actually about to mutate, say \"no mutation pending\" and stop — "
+        "don't manufacture ceremony."
     ),
 }
 
@@ -443,11 +582,18 @@ def build_lane_directive(arrow_key, trigger_verb, confidence, bias, matched=""):
 def build_posture_directive(domain, depth):
     return (
         f"[sidecar · posture] Posture shift to {domain}/{depth} detected — re-declare the "
-        f"working-mode contract:\n"
-        f"  - META = read-only: no file edits, no commits, no API writes. If a step would mutate "
-        f"state, pause and ask.\n"
-        f"  - DIRECT = mutate only the scoped surface, then run the relevant validation before "
-        f"claiming done.\n"
+        f"working-mode contract and act on it now:\n"
+        f"  - First, RE-EMIT the banner line exactly: POSTURE: {domain}/{depth} (reason: explicit "
+        f"toggle).\n"
+        f"  - META = read-only: no file edits/writes, no git commit/push, no destructive commands, "
+        f"no API writes (POST/PUT/PATCH/DELETE). If your NEXT planned step would mutate state, do NOT "
+        f"take it — name the step in one line and ask: \"Switch to DIRECT or keep read-only?\" before "
+        f"any tool call.\n"
+        f"  - DIRECT = mutate only the explicitly-scoped surface; before claiming done, run the "
+        f"relevant validation (name the exact test/lint/build command and its result). Repo-wide "
+        f"refactors/renames still require pausing to ask even in DIRECT.\n"
+        f"  - Carry this posture forward for the rest of the session until the next explicit "
+        f"[Posture → X/Y] toggle.\n"
         f"  (arrow: posture_shift · target {domain}/{depth})"
     )
 
@@ -494,7 +640,7 @@ def in_governed_zone(start=None):
 # blocks the tool call. These handlers are the runtime half of "rails on gates."
 
 _RISKY_PATH_RE = re.compile(
-    r"(migrations?/|/ledger|/charge|/refund|/payment|/webhook|"
+    r"(migrations?/|\b(ledger|charge|refund|payment|payout|balance|transaction|webhook)\b|"
     r"\.env\b|secrets?|credential|package\.json|package-lock|yarn\.lock|"
     r"Dockerfile|docker-compose|/deploy|/prod|\.github/workflows/)",
     re.IGNORECASE,
@@ -526,49 +672,137 @@ def _hook_context(event_name, text):
     return {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": text}}
 
 
-def handle_pretooluse(payload):
+# PreToolUse advisory text — two registers, swappable by SIDECAR_PREFLIGHT_MODE.
+#
+# concrete (default, SHIPPED): a CONCRETE ACTION — "grep the repo for EVERY OTHER writer
+#   of this invariant and LIST them" — which drives the model to actually run the search
+#   that surfaces semantic siblings (e.g. refund.ts next to charge.ts) with no import edge.
+# generic (ablation only): the weaker tic-309 register — "inspect the adjacent surfaces
+#   first, a peer file may share the invariant" — exhortation without a concrete tool action.
+#   Used by the generic-vs-concrete ablation (eval arm E1) to isolate whether the LIFT on
+#   coupled-file coverage is owned by the CONCRETE-ACTION upgrade, not the rigor receipt alone.
+#
+# Default is "concrete" so unset env preserves the shipped product behavior exactly. Fail-soft:
+# any unrecognized value falls back to concrete.
+
+_PREFLIGHT_BODY_CONCRETE = (
+    "This is a shared-invariant surface. Before the mutation lands, do the ENUMERATION first — "
+    "do not start with the edit:\n"
+    "  1. Identify the contract this write upholds (the table/ledger/endpoint/secret it touches, "
+    "e.g. an INSERT into `ledger_entries`, a charge/refund handler, a migration on `payments`).\n"
+    "  2. Run a concrete repo-wide search for EVERY OTHER WRITER of that same contract — not just "
+    "files this one imports. Grep the repo for the literal table/collection name, the "
+    "function/route name, and the invariant's keyword (e.g. `grep -rn \"ledger_entries\" .`, "
+    "`grep -rni \"refund\\|charge\\|payment\" src/`). Co-violators are usually SEMANTIC SIBLINGS "
+    "(refund.ts next to charge.ts), not import-graph neighbors.\n"
+    "  3. LIST the call sites you found by path, one per line, and for each say: does it hold the "
+    "same invariant (e.g. atomic transaction, idempotency key, auth check) that you are about to "
+    "add/change here? If any sibling shares the invariant and does NOT yet hold it, name it as "
+    "in-scope-or-deferred — do not silently fix only the file in front of you.\n"
+    "  4. Then name (one line each): the invariant at risk, the validation command that proves it "
+    "safe, and the rollback path.\n"
+    "If you cannot list the other writers, you have not searched — search before you mutate."
+)
+
+_PREFLIGHT_BODY_GENERIC = (
+    "This is a sensitive surface. Before the mutation lands, take a moment to think about coupling:\n"
+    "  - Name the invariant this write upholds (atomicity, idempotency, auth, etc.).\n"
+    "  - Inspect the adjacent surfaces first — a peer file may share the invariant you're about to "
+    "touch, so don't fix only the file in front of you.\n"
+    "  - Note the validation command and the rollback path.\n"
+    "Keep the change tight and consistent with the surrounding code."
+)
+
+
+def _preflight_mode():
+    """Read SIDECAR_PREFLIGHT_MODE env. Returns 'generic' or 'concrete' (default). Fail-soft."""
+    try:
+        v = (os.environ.get("SIDECAR_PREFLIGHT_MODE", "") or "").strip().lower()
+        return "generic" if v == "generic" else "concrete"
+    except Exception:
+        return "concrete"
+
+
+def handle_pretooluse(payload, chamber=None):
     """Advisory pre-mutation receipt when a tool call touches a risky surface."""
+    # Mute honor-site #2: PreToolUse muted (honors both "pretooluse" and the
+    # "preflight_pre_mutation" fire-site alias).
+    muted = _muted_set(chamber)
+    if _is_muted("PreToolUse", muted) or _is_muted("preflight_pre_mutation", muted):
+        return None
     tool_name = payload.get("tool_name", "")
     surface = _risk_surface(tool_name, payload.get("tool_input", {}))
     if not surface:
         return None
+    surface_tags = ", ".join(surface)
+    mode = _preflight_mode()
+    body = _PREFLIGHT_BODY_GENERIC if mode == "generic" else _PREFLIGHT_BODY_CONCRETE
     receipt = (
-        f"[sidecar · preflight] About to {tool_name} — risk surface: {', '.join(surface)}.\n"
-        "Before this mutation lands, name (one line each): the invariant at risk, the validation "
-        "command that proves it's safe, and the rollback path. If the blast radius isn't named, "
-        "HOLD and inspect the adjacent surfaces first — a peer file may share the invariant you're "
-        "about to touch.\n"
-        f"  (arrow: preflight_pre_mutation · tool {tool_name})"
+        f"[sidecar · preflight] About to {tool_name} — risk surface: {surface_tags}.\n"
+        f"{body}\n"
+        f"  (arrow: preflight_pre_mutation · tool {tool_name} · mode {mode})"
     )
     return _hook_context("PreToolUse", receipt)
 
 
-def handle_posttooluse(payload):
+def handle_posttooluse(payload, chamber=None):
     """Advisory evidence-digestion nudge after a risky mutation succeeds."""
+    # Mute honor-site #3: PostToolUse muted.
+    muted = _muted_set(chamber)
+    if _is_muted("PostToolUse", muted) or _is_muted("preflight_post_tool", muted):
+        return None
     tool_name = payload.get("tool_name", "")
     surface = _risk_surface(tool_name, payload.get("tool_input", {}))
     if not surface:
         return None
+    surface_tags = ", ".join(surface)
     nudge = (
-        f"[sidecar · post-tool] {tool_name} touched {', '.join(surface)}. Before moving on: did "
-        "you run the validation for it, and check whether an adjacent file imports the same "
-        "invariant? Name the next required check, or state why none is needed.\n"
+        f"[sidecar · post-tool] {tool_name} just wrote {surface_tags}. The mutation is on disk but "
+        "UNVERIFIED. Before moving to the next step, do these concrete checks now:\n"
+        "  1. Run the validation that proves this write upholds its invariant — the actual command "
+        "(test, typecheck, lint, migration dry-run, or a targeted unit test). Paste the command and "
+        "its result, do not assert 'looks correct'.\n"
+        "  2. Re-run the co-writer search for the contract you just touched "
+        "(`grep -rn \"<table-or-contract-name>\" .`) and confirm the enumerated siblings from "
+        "preflight are now CONSISTENT with this change — if you added an atomic transaction / "
+        "idempotency guard / auth check here, open each sibling writer and confirm it has the same "
+        "guard, or explicitly record which sibling is still divergent and why that is acceptable.\n"
+        "  3. State the next required check by name, or state — with the specific reason — why no "
+        "further check is needed.\n"
+        "A write with no run validation and no sibling cross-check is a candidate drift point, not a "
+        "finished step.\n"
         f"  (arrow: preflight_post_tool · tool {tool_name})"
     )
     return _hook_context("PostToolUse", nudge)
 
 
-def handle_stop(payload, event_name):
+def handle_stop(payload, event_name, chamber=None):
     """SubagentStop → verify-don't-trust-done advisory (a subagent just reported done). Plain
     Stop is a v1 no-op: a real done-claim verifier needs transcript inspection (owed as a
     follow-up gate); the block capability is confirmed available for that future surface."""
     if event_name != "SubagentStop":
         return None
+    # Mute honor-site #4: SubagentStop muted (also accepts the arrow alias).
+    muted = _muted_set(chamber)
+    if _is_muted("SubagentStop", muted) or _is_muted("delegate_verify_dont_trust_done", muted):
+        return None
     advisory = (
-        "[sidecar · verify] A subagent reported done. Its scoped context cannot see the "
-        "cross-cutting inconsistency a peer would catch — independently verify its result "
-        "(against sibling output, source data, or a counter-check) before you trust it. A "
-        "\"done\" report is necessary, NOT sufficient.\n"
+        "[sidecar · verify] A subagent reported done. Its scoped context could not see the "
+        "cross-cutting inconsistency a peer would catch — a 'done' report is necessary, NOT "
+        "sufficient. Run an INDEPENDENT re-check now, with concrete commands, before you trust it:\n"
+        "  1. List what the subagent claims it changed (files/contracts). For each touched contract, "
+        "run your own repo-wide search for OTHER writers of it "
+        "(`grep -rn \"<table-or-contract-name>\" .`) — the subagent's bounded scope is exactly where "
+        "it would have missed a semantic sibling.\n"
+        "  2. Run the validation yourself — re-execute the test/typecheck/build that proves the "
+        "claim, and read the actual output. Do not accept the subagent's summary of its own "
+        "validation.\n"
+        "  3. Diff or open the changed files and confirm the invariant the task required is actually "
+        "present in the code (not just described in the report).\n"
+        "  4. Verdict: VERIFIED (with the command output you ran) / DIVERGENT (name the gap) / "
+        "UNVERIFIED (say what you could not check).\n"
+        "If you have not run a command of your own, you have not verified — you have re-read a "
+        "report.\n"
         "  (arrow: delegate_verify_dont_trust_done · event SubagentStop)"
     )
     return _hook_context("SubagentStop", advisory)
@@ -578,14 +812,16 @@ def handle_stop(payload, event_name):
 # UserPromptSubmit lane
 # ----------------------------------------------------------------------
 
-def handle_user_prompt(payload):
+def handle_user_prompt(payload, chamber=None):
     """Build the UserPromptSubmit hook output (posture + arrow lane directives), or None."""
     prompt = payload.get("prompt", "") or payload.get("user_prompt", "")
     if not isinstance(prompt, str) or not prompt.strip():
         return None
 
-    chamber_path = find_chamber_path()
-    chamber = load_chamber(chamber_path) if chamber_path else None
+    # Mute honor-site #5: UserPromptSubmit muted WHOLESALE (mutes the whole prompt lane
+    # including posture; per-arrow muting is handled inside assess_intent).
+    if _is_muted("UserPromptSubmit", _muted_set(chamber)):
+        return None
 
     directives = []
 
@@ -632,16 +868,22 @@ def main():
         if in_governed_zone():
             return
 
+        # Load chamber once and thread it into each handler. The chamber carries both the
+        # arrow disposition and the `muted:` list; loading it here (cheap, no LLM cost) lets
+        # the repo-state handlers honor mute without each re-reading from disk.
+        chamber_path = find_chamber_path()
+        chamber = load_chamber(chamber_path) if chamber_path else None
+
         event = payload.get("hook_event_name", "")
         if event == "PreToolUse":
-            out = handle_pretooluse(payload)
+            out = handle_pretooluse(payload, chamber)
         elif event == "PostToolUse":
-            out = handle_posttooluse(payload)
+            out = handle_posttooluse(payload, chamber)
         elif event in ("Stop", "SubagentStop"):
-            out = handle_stop(payload, event)
+            out = handle_stop(payload, event, chamber)
         else:
             # UserPromptSubmit (or a legacy {"prompt": …} payload with no event name).
-            out = handle_user_prompt(payload)
+            out = handle_user_prompt(payload, chamber)
 
         if out:
             sys.stdout.write(json.dumps(out))
