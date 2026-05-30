@@ -27,7 +27,7 @@ description: |
   - when external docs, APIs, frameworks, or competitor patterns enter the session
   - when the user pastes code from an external source
   - when a URL is shared for context
-  - when the sidecar router emits <sidecar key="ingest_needed" />
+  - when the sidecar router injects an `ingest_needed` lane directive into additionalContext
 
   NOT WHEN:
   - for internal project context (use /tactical-hydration)

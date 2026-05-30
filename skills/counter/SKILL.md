@@ -29,7 +29,7 @@ description: |
   - before schema changes that affect contracts
   - before publication or irreversible deployment
   - before adopting an external framework or dependency
-  - when the sidecar router emits <sidecar key="counter_warranted" />
+  - when the sidecar router injects a `counter_warranted` lane directive into additionalContext
 
   NOT WHEN:
   - after a move has already landed (use /complement for post-landing surface mapping)

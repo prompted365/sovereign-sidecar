@@ -22,7 +22,7 @@ The agent is asked to produce a swarm/tranche spec. A blind judge (also `sonnet`
 
 ## Before / after at a glance
 
-Replicated across three independent runs (R1 + R2 ×2):
+Replicated across four independent runs (R1 + R2 ×2 + R3):
 
 | | **without Sidecar** | **with Sidecar** |
 |---|---|---|
@@ -88,7 +88,7 @@ The user never had to know what "governance" means. They asked to delegate. The 
 
 Honesty is the product. The same surface-discipline the sidecar enforces applies to its own proof:
 
-- **n = 3 total** (R1 `deleg-20260529T102156`; R2 `162502` + `162509`). The **with-sidecar** arm is the stable signal: premise_stress = 3 and total 11–12/12 every run. The fresh **control** sits at 8/12 (R1's 10/12 was the high outlier).
+- **n = 4 total** for the **delegate-arrow premise_stress delta** (R1 `deleg-20260529T102156`; R2 `162502` + `162509`; R3). The **with-sidecar** arm is the stable signal: premise_stress = 3 and total 11–12/12 every run. The fresh **control** sits at 8/12 (R1's 10/12 was the high outlier). The **verify-don't-trust-done clause** (verification_rigor judge axis: with-sidecar 2 vs control 1, with the slot firing in both arms so only the judge axis separated them) is **n = 1** — R3 only; do not aggregate it with the premise_stress series.
 - **The turn-count confound is unresolved, not beaten.** With-sidecar sometimes runs more turns. Slots-per-turn favored the sidecar in one R2 run and the control in the other. What's robust is the *judge axis* and *raw* slot coverage — not the turn-normalized version. We do not claim the sidecar wins "for free."
 - **`paymentsvc` is a goal string, not a real repo.** The agent reasoned about a described service, not files/tests/migrations on disk. The strongest demo — the sidecar refusing to touch money-moving code like ordinary app code during an actual refactor — is **not yet measured.** It's the next panel, not this one.
 - **One isolation leak:** a global `~/.claude/CLAUDE.md` posture banner bleeds into the "isolated" config (memory file isn't gated by `CLAUDE_CONFIG_DIR`). It's symmetric across both arms, so the delta holds — but it's why "ship posture+mode IN the package" is on the backlog ([issue #1](https://github.com/prompted365/sovereign-sidecar/issues/1)).

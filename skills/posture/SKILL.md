@@ -123,12 +123,103 @@ ask before executing.
 If cwd moves into a different workspace, re-emit the POSTURE banner and re-evaluate
 from the new workspace default unless explicitly pinned.
 
-## Sidecar Integration
+## Session-Start Posture Lifecycle (router contract)
 
-The sidecar chamber holds the current posture; the router hook detects
-`[Posture → X/Y]` toggles and emits `<sidecar key="posture_shift" />` for
-downstream consumers (chamber refresh, disposition update).
+This section specifies the contract the `hooks/sidecar-router.py` router **must**
+satisfy. The router lane owns the implementation; this skill owns the spec.
 
-Posture-aware arrow firing is the load-bearing benefit: same user message means
-different things in ENG/DIRECT vs OPS/META. The router weights confidence
-against the chamber's disposition_bias for the active posture.
+### 1. Banner emission
+
+The router must emit the POSTURE banner at session start and on every
+`[Posture → X/Y]` toggle detected in a submitted prompt. The banner format is
+exactly:
+
+```
+POSTURE: <ENG|OPS>/<DIRECT|META> (reason: <explicit|workspace default|verb inference>)
+```
+
+- **Session start** — router reads `chamber.posture` field; if absent or empty,
+  applies determination-priority (see §2) and writes the resolved value back into
+  the chamber before injecting the banner directive.
+- **Toggle detected** — router parses the new posture, writes it to
+  `chamber.posture`, updates `chamber.refreshed_at`, and injects the banner
+  directive as inline context before the primary work proceeds.
+- The banner is injected as human-readable model context (not a machine KV tag)
+  so the model can act on the declared constraint immediately.
+
+### 2. Posture persistence (chamber is the source of truth)
+
+The chamber's `posture:` field is the single source of truth for active posture
+within a session:
+
+- On session start: initialize from explicit declaration → verb inference →
+  workspace default (in that priority order).
+- On `[Posture → X/Y]` toggle: overwrite `chamber.posture` immediately; do not
+  carry the prior value forward.
+- Between prompts: carry forward unchanged — the router must NOT re-derive posture
+  on every prompt; it reads `chamber.posture` and applies it.
+- The router must NOT re-emit the full banner on every prompt — only at session
+  start and on toggle events. Repeated banner injection introduces noise without
+  adding contract clarity.
+
+### 3. Posture-derived trigger weighting
+
+Active posture shifts the router's confidence thresholds for mutation-implying
+arrows (`/counter`, `/complement`):
+
+- **Under META**: when a prompt implies mutation (detected by mutation-keyword
+  presence — write/edit/delete/commit/create/modify/rename/deploy/push/patch or
+  API verbs POST/PUT/PATCH/DELETE), **raise** counter/preflight firing confidence
+  above the arrow's `disposition_bias` baseline. A mutation under META is a
+  contract violation worth surfacing before it executes.
+- **Under DIRECT**: **lower** mutation-trigger confidence toward the arrow's
+  baseline. Mutation is expected; the router's job is scope-checking, not
+  general mutation friction.
+- The weighting is a multiplier on `disposition_bias`, not a replacement. The
+  chamber's per-arrow bias remains the calibration anchor; posture shifts the
+  effective threshold.
+
+### 4. Pre-mutation enforcement under META
+
+When `chamber.posture` is META (either `ENG/META` or `OPS/META`) and the router
+detects a mutation-implying prompt, the posture lane fires a HOLD-and-ask
+directive before the primary work executes:
+
+```
+[sidecar · posture] Active posture is META (read-only contract).
+This prompt implies a mutation: <one-sentence description of the detected action>.
+META constraint: no file edits/writes, no git commits, no destructive commands,
+no API writes (POST/PUT/PATCH/DELETE).
+
+Switch to DIRECT or keep read-only?
+  → "switch" or "POSTURE: <domain>/DIRECT" to proceed with mutation
+  → "keep" or no response to proceed read-only (mutation will be blocked)
+```
+
+The directive is injected as model context so the model surfaces the hold to the
+user and waits for resolution. The router does not block the tool call at the
+physics layer (that is the harness gate's job if installed); the posture lane
+raises the hold through the perception layer (model-visible directive).
+
+### 5. Carry-forward discipline
+
+- Posture carries forward within the session unless a toggle is explicitly detected.
+- A workspace switch (cwd moves into a different workspace) triggers a
+  re-evaluation: the router re-derives posture from the new workspace's default
+  (if available) and re-emits the banner with `reason: workspace default`.
+- Explicit `POSTURE: X/Y` declaration in a prompt always wins over carry-forward,
+  regardless of what the chamber currently holds.
+
+---
+
+## Sidecar Integration Note
+
+The chamber's `posture:` field couples this skill to the router at runtime.
+Posture-aware arrow firing is the load-bearing benefit: the same user message
+means different things in ENG/DIRECT vs OPS/META. The router weights
+`disposition_bias` against the active posture (§3 above) rather than treating
+all prompts identically.
+
+The posture lane does not own the chamber schema — that lives in
+`specs/chamber.md`. This skill owns the behavioral contract that the chamber
+enables.

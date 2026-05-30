@@ -40,7 +40,7 @@ description: |
   WHEN:
   - before publication or audience shift (board update, exec brief, doc handoff)
   - when source-content meaning must survive into a new audience or purpose
-  - when sidecar router emits <sidecar key="tom_due" target="audience_shift" />
+  - when the sidecar router injects a `tom_due` lane directive into additionalContext
   - on explicit invocation
 
   NOT WHEN:

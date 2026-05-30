@@ -31,7 +31,7 @@ description: |
   - after a local closure event that may hide non-local incompleteness
   - at the point of formulating a response with apparent dual-ray structure
   - when an artifact lands and the caller suspects it is partial
-  - when sidecar router emits <sidecar key="complement_due" />
+  - when the sidecar router injects a `complement_due` lane directive into additionalContext
 
   NOT WHEN:
   - after every trivial step (gates are narrow by design)

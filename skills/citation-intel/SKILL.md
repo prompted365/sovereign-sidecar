@@ -35,7 +35,7 @@ description: |
   - before publishing long-form to AI-searchable surfaces (blog, docs, paper)
   - when an article should be cited by Perplexity / ChatGPT / Claude in
     response to topic queries
-  - when sidecar router emits <sidecar key="citation_ready_due" />
+  - when the sidecar router injects a `citation_ready_due` lane directive into additionalContext
   - on site-level audit request (robots.txt / llms.txt / AI crawler allowlist)
 
   NOT WHEN:

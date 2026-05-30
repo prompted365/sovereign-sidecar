@@ -1,0 +1,463 @@
+#!/usr/bin/env python3
+"""
+sidecar — Sovereign Sidecar CLI
+
+Subcommands:
+  doctor  check environment readiness
+  init    generate default chamber + print settings patch
+  smoke   run tests/smoke.sh
+
+Usage:
+  sidecar doctor
+  sidecar init [--apply]
+  sidecar smoke
+"""
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Repo root resolution — bin/sidecar lives one level inside the repo root
+# ---------------------------------------------------------------------------
+
+SCRIPT_PATH = Path(__file__).resolve()
+REPO_ROOT = SCRIPT_PATH.parent.parent  # bin/ -> repo root
+
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+ROUTER_REL = Path("hooks/sidecar-router.py")
+SMOKE_REL = Path("tests/smoke.sh")
+CHAMBER_EXAMPLE_REL = Path("specs/chamber.yaml.example")
+
+ROUTER_PATH = REPO_ROOT / ROUTER_REL
+SMOKE_PATH = REPO_ROOT / SMOKE_REL
+CHAMBER_EXAMPLE_PATH = REPO_ROOT / CHAMBER_EXAMPLE_REL
+
+DEFAULT_CHAMBER_DEST = Path("~/.sidecar/chamber.yaml").expanduser()
+
+
+# ---------------------------------------------------------------------------
+# Conservative default chamber biases
+# These values pair with the recalibrated confidence gate (sibling router lane)
+# that gates on the 0.3-0.7 mid-band — values below reflect sane mid-band
+# defaults so arrows fire on genuine evidence, not every match.
+# ---------------------------------------------------------------------------
+
+CONSERVATIVE_BIASES = {
+    "preflight":      0.4,
+    "counter":        0.5,
+    "complement":     0.6,
+    "delegate":       0.55,
+    "ingest":         0.4,
+    "tom":            0.45,
+    "citation_intel": 0.5,
+    "posture":        0.5,
+}
+
+CONSERVATIVE_BIAS_COMMENT = (
+    "# disposition_bias values tuned for mid-band gate (0.3-0.7): "
+    "fires on genuine evidence, not every match.\n"
+    "# Pair with recalibrated router confidence gate. "
+    "Adjust per-arrow to taste; see specs/chamber.md.\n"
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+CHECK  = "✓"   # ✓
+CROSS  = "✗"   # ✗
+INDENT = "  "
+
+
+def _ok(msg: str) -> None:
+    print(f"{INDENT}{CHECK} {msg}")
+
+
+def _fail(msg: str) -> None:
+    print(f"{INDENT}{CROSS} {msg}")
+
+
+def _find_chamber() -> Path | None:
+    """Return first existing chamber path in discovery order."""
+    candidates = [
+        Path(os.environ.get("SIDECAR_CHAMBER", "")).expanduser()
+        if os.environ.get("SIDECAR_CHAMBER") else None,
+        Path("~/.sidecar/chamber.yaml").expanduser(),
+        Path("~/.claude/sidecar/chamber.yaml").expanduser(),
+        Path(".sidecar/chamber.yaml"),
+    ]
+    for c in candidates:
+        if c and c.is_file():
+            return c
+    return None
+
+
+def _settings_patch(router_abs: Path) -> dict:
+    """Return the exact JSON dict for the UserPromptSubmit hook block."""
+    return {
+        "hooks": {
+            "UserPromptSubmit": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": str(router_abs),
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+
+def _patch_json_pretty(router_abs: Path) -> str:
+    return json.dumps(_settings_patch(router_abs), indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: doctor
+# ---------------------------------------------------------------------------
+
+def cmd_doctor(_args) -> int:
+    print("Sovereign Sidecar — doctor")
+    print()
+
+    all_ok = True
+
+    # 1. python3
+    py = shutil.which("python3")
+    if py:
+        _ok(f"python3 present ({py})")
+    else:
+        _fail("python3 not found — install Python 3.8+")
+        all_ok = False
+
+    # 2. router path valid + executable
+    if ROUTER_PATH.exists():
+        if os.access(ROUTER_PATH, os.X_OK):
+            _ok(f"router path valid ({ROUTER_REL})")
+        else:
+            _fail(f"router exists but is not executable — run: chmod +x {ROUTER_PATH}")
+            all_ok = False
+    else:
+        _fail(f"router not found at {ROUTER_PATH}")
+        all_ok = False
+
+    # 3. chamber found or generatable
+    chamber = _find_chamber()
+    if chamber:
+        _ok(f"chamber found ({chamber})")
+    else:
+        if CHAMBER_EXAMPLE_PATH.exists():
+            _ok(
+                f"chamber not found — generatable (run `sidecar init` to create "
+                f"~/.sidecar/chamber.yaml)"
+            )
+        else:
+            _fail(
+                f"chamber not found and example missing ({CHAMBER_EXAMPLE_PATH}) — "
+                "check your sidecar installation"
+            )
+            all_ok = False
+
+    # 4. settings hook snippet available
+    if ROUTER_PATH.exists():
+        _ok(
+            "settings hook snippet available "
+            "(run `sidecar init` to print the patch)"
+        )
+    else:
+        _fail("settings hook snippet unavailable — router missing (see above)")
+        all_ok = False
+
+    # 5. smoke ready
+    if SMOKE_PATH.exists() and os.access(SMOKE_PATH, os.R_OK):
+        _ok(f"smoke ready ({SMOKE_REL})")
+    else:
+        _fail(f"smoke.sh not found at {SMOKE_PATH}")
+        all_ok = False
+
+    print()
+    if all_ok:
+        print("All checks passed. Next: `sidecar init` → apply settings patch → `sidecar smoke`")
+    else:
+        print("Some checks failed. Fix the items above, then re-run `sidecar doctor`.")
+
+    return 0 if all_ok else 1
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: init
+# ---------------------------------------------------------------------------
+
+def cmd_init(args) -> int:
+    print("Sovereign Sidecar — init")
+    print()
+
+    # ---- Step 1: Generate chamber ----------------------------------------
+
+    if not CHAMBER_EXAMPLE_PATH.exists():
+        print(f"{CROSS} chamber example not found at {CHAMBER_EXAMPLE_PATH}")
+        print("  Cannot generate chamber — check your sidecar installation.")
+        return 1
+
+    # Build conservative default chamber from example, overwriting biases
+    print(f"Generating conservative default chamber -> {DEFAULT_CHAMBER_DEST}")
+    print()
+
+    with open(CHAMBER_EXAMPLE_PATH) as f:
+        example_lines = f.readlines()
+
+    patched_lines = _patch_chamber_biases(example_lines)
+    chamber_content = CONSERVATIVE_BIAS_COMMENT + "".join(patched_lines)
+
+    dest = DEFAULT_CHAMBER_DEST
+    dest_dir = dest.parent
+
+    if dest.exists():
+        print(
+            f"  {CHECK} Chamber already exists at {dest} — skipping write.\n"
+            f"      Delete it first if you want to regenerate from scratch."
+        )
+    else:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest.write_text(chamber_content)
+        print(f"  {CHECK} Chamber written to {dest}")
+
+    print()
+
+    # ---- Step 2: Print the settings patch --------------------------------
+
+    router_abs = ROUTER_PATH.resolve()
+    patch_json = _patch_json_pretty(router_abs)
+
+    print("=" * 66)
+    print("SETTINGS PATCH — add to ~/.claude/settings.json")
+    print("=" * 66)
+    print()
+    print("Your ~/.claude/settings.json must contain a top-level \"hooks\" key.")
+    print("If one already exists, MERGE the UserPromptSubmit array — do not")
+    print("overwrite your existing hooks.")
+    print()
+    print("Exact JSON block to add:")
+    print()
+    print(patch_json)
+    print()
+    print("=" * 66)
+    print()
+
+    # ---- Step 3: Optional --apply ----------------------------------------
+
+    if args.apply:
+        _apply_settings_patch(router_abs)
+
+    else:
+        settings_path = Path("~/.claude/settings.json").expanduser()
+        print(f"To auto-apply (with backup): run `sidecar init --apply`")
+        print(f"  Reads {settings_path}, backs it up, merges the hook, writes back.")
+        print(f"  Skipped by default — apply manually to stay in control.")
+
+    print()
+    print("After applying the patch, run `sidecar smoke` to verify.")
+    return 0
+
+
+def _patch_chamber_biases(lines: list[str]) -> list[str]:
+    """
+    Walk the example chamber lines, replacing disposition_bias values with
+    conservative defaults for known arrows. Returns patched line list.
+    """
+    result = []
+    current_arrow = None
+
+    # Map example key names (citation_intel uses underscore in YAML) to our
+    # CONSERVATIVE_BIASES lookup. The example uses "citation_intel" as the
+    # YAML key for the citation-intel arrow.
+    for line in lines:
+        stripped = line.lstrip()
+
+        # Detect arrow block header (e.g. "  ingest:" at indent 2)
+        # Arrow keys sit under "arrows:" and "support:" — we only patch arrows.
+        arrow_match = _detect_arrow_key(line)
+        if arrow_match:
+            current_arrow = arrow_match
+
+        # Patch disposition_bias line when inside a known arrow
+        if (
+            current_arrow in CONSERVATIVE_BIASES
+            and stripped.startswith("disposition_bias:")
+        ):
+            indent = len(line) - len(line.lstrip())
+            new_bias = CONSERVATIVE_BIASES[current_arrow]
+            line = (
+                " " * indent
+                + f"disposition_bias: {new_bias}"
+                + "  # mid-band gate default\n"
+            )
+
+        result.append(line)
+
+    return result
+
+
+def _detect_arrow_key(line: str) -> str | None:
+    """
+    Return the arrow key name if this line introduces an arrow block, else None.
+    Arrow blocks are indented 2 spaces and end with a colon, e.g. "  ingest:".
+    """
+    import re
+    m = re.match(r"^  ([a-zA-Z_][a-zA-Z0-9_]*):\s*$", line)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _apply_settings_patch(router_abs: Path) -> None:
+    """Read ~/.claude/settings.json, merge the hook entry, write back with backup."""
+    settings_path = Path("~/.claude/settings.json").expanduser()
+    backup_path = settings_path.with_suffix(".json.sidecar-backup")
+
+    print("Applying settings patch …")
+
+    # Read existing settings (or start empty)
+    existing: dict = {}
+    if settings_path.exists():
+        try:
+            with open(settings_path) as f:
+                existing = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"  {CROSS} Could not parse {settings_path}: {e}")
+            print("      Fix the JSON first, then re-run `sidecar init --apply`.")
+            return
+    else:
+        print(f"  {CHECK} {settings_path} not found — will create it.")
+
+    # Backup
+    if settings_path.exists():
+        import shutil as _shutil
+        _shutil.copy2(settings_path, backup_path)
+        print(f"  {CHECK} Backup written to {backup_path}")
+
+    # Merge: inject our hook into UserPromptSubmit array without clobbering others
+    new_hook_entry = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": str(router_abs),
+            }
+        ]
+    }
+
+    hooks_section = existing.setdefault("hooks", {})
+    ups = hooks_section.setdefault("UserPromptSubmit", [])
+
+    # Idempotent: skip if our command is already registered
+    our_cmd = str(router_abs)
+    already_registered = any(
+        any(h.get("command") == our_cmd for h in entry.get("hooks", []))
+        for entry in ups
+        if isinstance(entry, dict)
+    )
+
+    if already_registered:
+        print(f"  {CHECK} Sidecar hook already registered in {settings_path} — no change.")
+        return
+
+    ups.append(new_hook_entry)
+
+    with open(settings_path, "w") as f:
+        json.dump(existing, f, indent=2)
+        f.write("\n")
+
+    print(f"  {CHECK} Hook merged into {settings_path}")
+    print(f"      Registered: python3 {router_abs}")
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: smoke
+# ---------------------------------------------------------------------------
+
+def cmd_smoke(_args) -> int:
+    print("Sovereign Sidecar — smoke test")
+    print()
+
+    if not SMOKE_PATH.exists():
+        print(f"{CROSS} smoke.sh not found at {SMOKE_PATH}")
+        return 1
+
+    result = subprocess.run(
+        ["bash", str(SMOKE_PATH)],
+        cwd=str(REPO_ROOT),
+    )
+
+    print()
+    if result.returncode == 0:
+        print("smoke: PASS")
+    else:
+        print("smoke: FAIL")
+
+    return result.returncode
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="sidecar",
+        description="Sovereign Sidecar CLI — install, check, and verify the sidecar.",
+    )
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    # doctor
+    sub.add_parser(
+        "doctor",
+        help="check environment readiness (python3, router, chamber, settings snippet, smoke)",
+    )
+
+    # init
+    p_init = sub.add_parser(
+        "init",
+        help="generate default chamber.yaml and print the Claude Code settings patch",
+    )
+    p_init.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "merge the hook into ~/.claude/settings.json automatically "
+            "(backs up first; idempotent)"
+        ),
+    )
+
+    # smoke
+    sub.add_parser(
+        "smoke",
+        help="run tests/smoke.sh and report PASS/FAIL",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "doctor":
+        return cmd_doctor(args)
+    elif args.command == "init":
+        return cmd_init(args)
+    elif args.command == "smoke":
+        return cmd_smoke(args)
+    else:
+        parser.print_help()
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

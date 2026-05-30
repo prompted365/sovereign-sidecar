@@ -165,7 +165,10 @@ PATTERN_TABLE = [
 
     # /counter — irreversible decision pending
     ("counter", "warranted", [
-        r"\bshould we\b",
+        # "should we" narrowed to CONSEQUENTIAL verbs (tic 308) — bare "should we rename this
+        # var" no longer fires the full adversarial lane; the recalibrated gate also requires
+        # corroboration for a single weak match.
+        r"\bshould we (really |actually )?(commit|lock|finalize|merge|ship|deploy|adopt|migrate|standardi[sz]e|drop|delete|rewrite|switch to|go with)\b",
         r"\b(architecture|schema|API) (decision|change|contract)\b",
         r"\b(commit to|lock in|finalize)\b",
         r"\bbefore we (deploy|publish|push to prod)\b",
@@ -200,13 +203,34 @@ PATTERN_TABLE = [
         r"\bsub-?agents?\b",
         r"\bfan(?:ning)?[ -]out\b",
         r"\bspawn\b",
-        r"\bbreak (this|it|the \w+) (down |up )?into\b",
         r"\borchestrat",
         r"\bparalleli[sz]e\b",
         r"\btranche",
         r"\bswarm\b",
-        r"\baudit .* across\b",
-        r"\b(decompos|divid)\w* (this|the|it|into)\b",
+        # NOTE (tic 308): bare decomposition verbs ("break X into", "audit .* across",
+        # "decompose this") were REMOVED — they over-fired the full swarm directive on
+        # ordinary refactors ("break this function into smaller helpers"). delegate now
+        # requires genuine fan-out / agent vocabulary; a real delegation prompt carries it
+        # alongside any decomposition verb, so legit cases still fire (multi-match).
+    ], 0.80),
+
+    # /preflight — operator MOMENTUM implying imminent mutation (the repo-native pre-mutation
+    # gate). This is the high-value moment the governance-literate arrows miss: the user says
+    # "go / ship it / make it happen / patch this" with NO governance language. UserPromptSubmit
+    # only sees the prompt (not tool/repo state), so this is the momentum heuristic; the PRECISE
+    # gate lives in the PreToolUse handler (which sees the actual file/bash intent). The runtime
+    # receipt makes any false-fire cheap to reject rather than silent noise.
+    ("preflight", "warranted", [
+        r"\bmake it happen\b",
+        r"\blet'?s (go|do (this|it)|ship)\b",
+        r"\bgo ahead\b",
+        r"\bship it\b",
+        r"\bsend it\b",
+        r"\b(patch|fix|wire up|implement|build|run|clean up) (this|it|the \w+)\b",
+        r"\brefactor\b",
+        r"\bget (this|it|the repo) (ready|launch[- ]?ready|production[- ]?ready)\b",
+        r"\b(deploy|merge|push) (this|it|the \w+|to)\b",
+        r"\brun (the )?(migration|deploy|release|build)\b",
     ], 0.80),
 ]
 
@@ -256,13 +280,22 @@ def assess_intent(prompt, chamber):
         if match_count == 0:
             continue
 
-        # Confidence: base × density factor (1.0 for 1 match, 1.15 for 2, 1.3 for 3+)
-        density_factor = {0: 0.0, 1: 1.0, 2: 1.15}.get(match_count, 1.3)
+        # Confidence: base × density factor. Single-match sits MID-BAND (~0.5) so a chamber
+        # disposition_bias in the 0.4–0.7 range ACTUALLY gates firing; additional matches climb
+        # toward the base ceiling. Pre-tic-308 this was {1:1.0, 2:1.15, 3+:1.3}, which put
+        # single-match confidence AT base (0.75–0.85) — above every sane bias — so the bias knob
+        # gated nothing and every arrow fired on a single pattern match (verified inert tic 308).
+        # Recalibrated per entourage brief: one weak signal is no longer enough; corroboration is.
+        density_factor = {0: 0.0, 1: 0.65, 2: 0.85}.get(match_count, 1.0)
         confidence = min(1.0, base_confidence * density_factor)
 
         if confidence > bias:
             target = _derive_target(arrow_key, first_match_target or "active_move")
-            fires.append((arrow_key, trigger_verb, target, confidence, bias))
+            # Carry the raw matched substring for the runtime receipt — it is the "why it
+            # fired" the user sees, turning a false-fire from silent noise into a rejectable
+            # signal (entourage brief #2).
+            fires.append((arrow_key, trigger_verb, target, confidence, bias,
+                          first_match_target or ""))
 
     return fires
 
@@ -369,24 +402,41 @@ LANE_DIRECTIVES = {
         "metabolize shared context before handing it down (don't paste raw).\n"
         "  Emit the dispatch as an explicit spec before spawning anything."
     ),
+    "preflight": (
+        "Operator momentum detected — a mutation may be imminent. Run the PREFLIGHT lane "
+        "BEFORE you touch the repo. Produce a mutation receipt:\n"
+        "  - intended action (one line)\n"
+        "  - target files / surfaces\n"
+        "  - repo evidence actually inspected (read it — don't assume)\n"
+        "  - invariant at risk (what must stay true through the change)\n"
+        "  - validation command (how you'll prove the change is safe)\n"
+        "  - rollback path (how to undo)\n"
+        "  - verdict: PROCEED / HOLD / ASK\n"
+        "  HOLD if blast radius is unnamed; ASK if an invariant is unclear; PROCEED only when "
+        "all six lines are real, not placeholders. If nothing is actually about to mutate, say "
+        "\"no mutation pending\" and stop — don't manufacture ceremony."
+    ),
 }
 
 
-def build_lane_directive(arrow_key, trigger_verb, confidence, bias):
+def build_lane_directive(arrow_key, trigger_verb, confidence, bias, matched=""):
     """Build a readable lane directive. Returns str, or None for unknown arrows.
 
-    The trailing provenance line stays human-readable but keeps the
-    `<arrow>_<verb>` token so a downstream tool (or a smoke test) can still
-    detect which lane fired without parsing a machine-only dict.
+    The trailing RECEIPT line stays human-readable but keeps the `<arrow>_<verb>`
+    token so a downstream tool (or a smoke test) can still detect which lane fired
+    without parsing a machine-only dict. It also names the matched trigger substring
+    — the "why it fired" — so the user can reject a mis-fire at a glance instead of
+    learning to skim past silent noise (entourage brief #2).
     """
     body = LANE_DIRECTIVES.get(arrow_key)
     if not body:
         return None
     label = arrow_key.replace("_", "-")
+    why = f' · matched "{matched}"' if matched else ""
     return (
         f"[sidecar · {label}] {body}\n"
-        f"  (arrow: {arrow_key}_{trigger_verb} · confidence {confidence:.2f} "
-        f"· chamber_bias {bias:.2f})"
+        f"  (arrow: {arrow_key}_{trigger_verb}{why} · confidence {confidence:.2f} "
+        f"> chamber_bias {bias:.2f})"
     )
 
 
@@ -432,59 +482,169 @@ def in_governed_zone(start=None):
 
 
 # ----------------------------------------------------------------------
-# Hook entry point
+# Repo-state hooks (PreToolUse / PostToolUse / SubagentStop) — conservative, advisory
+# ----------------------------------------------------------------------
+#
+# The UserPromptSubmit lane reads only the prompt. The repo-native obstacle-avoidance the
+# product promises lives HERE: catch dangerous tool intent BEFORE mutation, digest evidence
+# AFTER, and verify done-claims at subagent stop. v1 is ADVISORY — it injects receipts into
+# additionalContext; it does NOT hard-block. The {"decision":"block"} capability is confirmed
+# available in Claude Code 2.1.157 and is reserved for a measured later gate (block-class
+# behavior is its own /review decision). Fail-soft throughout: any error → no output, never
+# blocks the tool call. These handlers are the runtime half of "rails on gates."
+
+_RISKY_PATH_RE = re.compile(
+    r"(migrations?/|/ledger|/charge|/refund|/payment|/webhook|"
+    r"\.env\b|secrets?|credential|package\.json|package-lock|yarn\.lock|"
+    r"Dockerfile|docker-compose|/deploy|/prod|\.github/workflows/)",
+    re.IGNORECASE,
+)
+_RISKY_BASH_RE = re.compile(
+    r"\b(git\s+(push|reset\s+--hard|clean\s+-[a-z]*f|rebase)|rm\s+-rf|"
+    r"npm\s+publish|migrate|alembic|prisma\s+migrate|drop\s+table|truncate\b|"
+    r"deploy|terraform\s+apply|kubectl\s+apply)\b",
+    re.IGNORECASE,
+)
+
+
+def _risk_surface(tool_name, tool_input):
+    """Return a short list of human-readable risk tags for a tool call, or [] if low-risk."""
+    tags = []
+    ti = tool_input if isinstance(tool_input, dict) else {}
+    if tool_name in ("Edit", "Write", "NotebookEdit", "MultiEdit"):
+        path = str(ti.get("file_path") or ti.get("notebook_path") or "")
+        if _RISKY_PATH_RE.search(path):
+            tags.append(f"writes {os.path.basename(path) or 'a sensitive surface'}")
+    elif tool_name == "Bash":
+        cmd = str(ti.get("command") or "")
+        if _RISKY_BASH_RE.search(cmd):
+            tags.append("a destructive / deploy / migration / push command")
+    return tags
+
+
+def _hook_context(event_name, text):
+    return {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": text}}
+
+
+def handle_pretooluse(payload):
+    """Advisory pre-mutation receipt when a tool call touches a risky surface."""
+    tool_name = payload.get("tool_name", "")
+    surface = _risk_surface(tool_name, payload.get("tool_input", {}))
+    if not surface:
+        return None
+    receipt = (
+        f"[sidecar · preflight] About to {tool_name} — risk surface: {', '.join(surface)}.\n"
+        "Before this mutation lands, name (one line each): the invariant at risk, the validation "
+        "command that proves it's safe, and the rollback path. If the blast radius isn't named, "
+        "HOLD and inspect the adjacent surfaces first — a peer file may share the invariant you're "
+        "about to touch.\n"
+        f"  (arrow: preflight_pre_mutation · tool {tool_name})"
+    )
+    return _hook_context("PreToolUse", receipt)
+
+
+def handle_posttooluse(payload):
+    """Advisory evidence-digestion nudge after a risky mutation succeeds."""
+    tool_name = payload.get("tool_name", "")
+    surface = _risk_surface(tool_name, payload.get("tool_input", {}))
+    if not surface:
+        return None
+    nudge = (
+        f"[sidecar · post-tool] {tool_name} touched {', '.join(surface)}. Before moving on: did "
+        "you run the validation for it, and check whether an adjacent file imports the same "
+        "invariant? Name the next required check, or state why none is needed.\n"
+        f"  (arrow: preflight_post_tool · tool {tool_name})"
+    )
+    return _hook_context("PostToolUse", nudge)
+
+
+def handle_stop(payload, event_name):
+    """SubagentStop → verify-don't-trust-done advisory (a subagent just reported done). Plain
+    Stop is a v1 no-op: a real done-claim verifier needs transcript inspection (owed as a
+    follow-up gate); the block capability is confirmed available for that future surface."""
+    if event_name != "SubagentStop":
+        return None
+    advisory = (
+        "[sidecar · verify] A subagent reported done. Its scoped context cannot see the "
+        "cross-cutting inconsistency a peer would catch — independently verify its result "
+        "(against sibling output, source data, or a counter-check) before you trust it. A "
+        "\"done\" report is necessary, NOT sufficient.\n"
+        "  (arrow: delegate_verify_dont_trust_done · event SubagentStop)"
+    )
+    return _hook_context("SubagentStop", advisory)
+
+
+# ----------------------------------------------------------------------
+# UserPromptSubmit lane
+# ----------------------------------------------------------------------
+
+def handle_user_prompt(payload):
+    """Build the UserPromptSubmit hook output (posture + arrow lane directives), or None."""
+    prompt = payload.get("prompt", "") or payload.get("user_prompt", "")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return None
+
+    chamber_path = find_chamber_path()
+    chamber = load_chamber(chamber_path) if chamber_path else None
+
+    directives = []
+
+    # Posture toggle takes precedence — re-declare the working-mode contract.
+    posture = detect_posture_toggle(prompt)
+    if posture:
+        directives.append(build_posture_directive(*posture))
+
+    # Arrow firing: each warranted arrow injects its lane protocol as a directive,
+    # with a receipt naming the matched trigger (the "why it fired").
+    if chamber:
+        fires = assess_intent(prompt, chamber)
+        for arrow_key, trigger_verb, target, confidence, bias, matched in fires:
+            directives.append(
+                build_lane_directive(arrow_key, trigger_verb, confidence, bias, matched)
+            )
+
+    directives = [d for d in directives if d]
+    if not directives:
+        return None
+
+    plural = "lane" if len(directives) == 1 else "lanes"
+    header = (
+        f"[Sovereign Sidecar] Your message activated {len(directives)} governance "
+        f"{plural}. Run each inline before your main response, then continue:"
+    )
+    additional_context = header + "\n\n" + "\n\n".join(directives)
+    return _hook_context("UserPromptSubmit", additional_context)
+
+
+# ----------------------------------------------------------------------
+# Hook entry point — branches on the hook event
 # ----------------------------------------------------------------------
 
 def main():
-    # Fail-soft: any failure emits empty hook output (does not block prompt).
+    # Fail-soft: any failure emits empty hook output (never blocks prompt or tool).
     try:
         raw = sys.stdin.read()
         if not raw.strip():
             return  # no input, no output
         payload = json.loads(raw)
-        prompt = payload.get("prompt", "") or payload.get("user_prompt", "")
-        if not isinstance(prompt, str) or not prompt.strip():
-            return
 
-        # Outpost boundary: defer to the real federation when present.
+        # Outpost boundary: defer to the real federation when present (all events).
         if in_governed_zone():
             return
 
-        chamber_path = find_chamber_path()
-        chamber = load_chamber(chamber_path) if chamber_path else None
+        event = payload.get("hook_event_name", "")
+        if event == "PreToolUse":
+            out = handle_pretooluse(payload)
+        elif event == "PostToolUse":
+            out = handle_posttooluse(payload)
+        elif event in ("Stop", "SubagentStop"):
+            out = handle_stop(payload, event)
+        else:
+            # UserPromptSubmit (or a legacy {"prompt": …} payload with no event name).
+            out = handle_user_prompt(payload)
 
-        directives = []
-
-        # Posture toggle takes precedence — re-declare the working-mode contract.
-        posture = detect_posture_toggle(prompt)
-        if posture:
-            directives.append(build_posture_directive(*posture))
-
-        # Arrow firing: each warranted arrow injects its lane protocol as a directive.
-        if chamber:
-            fires = assess_intent(prompt, chamber)
-            for arrow_key, trigger_verb, target, confidence, bias in fires:
-                directives.append(build_lane_directive(arrow_key, trigger_verb, confidence, bias))
-
-        directives = [d for d in directives if d]
-        if not directives:
-            return
-
-        # Emit. The directives ride inside additionalContext as readable instructions
-        # the model acts on directly — it runs each lane inline before its main reply.
-        plural = "lane" if len(directives) == 1 else "lanes"
-        header = (
-            f"[Sovereign Sidecar] Your message activated {len(directives)} governance "
-            f"{plural}. Run each inline before your main response, then continue:"
-        )
-        additional_context = header + "\n\n" + "\n\n".join(directives)
-        hook_output = {
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": additional_context,
-            }
-        }
-        sys.stdout.write(json.dumps(hook_output))
+        if out:
+            sys.stdout.write(json.dumps(out))
     except Exception:
         # Fail-soft. No output, no block.
         return

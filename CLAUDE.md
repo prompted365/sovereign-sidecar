@@ -137,7 +137,7 @@ No persistence needed for session-scoped behavioral shaping. Persistence is the 
 |---|---|---|
 | Chamber (session-scoped) | Tic-gated conformations | "Why did I lose my posture history?" |
 | Disposition (session-scoped) | Harmony manifold | "Why doesn't my quiver remember what worked?" |
-| Quick-fire signals (ephemeral) | Signal manifold + warrants | "Why can't I track recurring conditions?" |
+| Session-scoped lane firings (ephemeral) | Signal manifold + warrants | "Why can't I track recurring conditions?" |
 | No review pipeline | /review + CogPR queue | "Why can't I promote lessons to doctrine?" |
 
 Each persistence ask maps to exactly one Ubiquity primitive. The sidecar IS the onramp.
@@ -156,7 +156,7 @@ Each persistence ask maps to exactly one Ubiquity primitive. The sidecar IS the 
 | Dehydrated /tom | `skills/tom/` |
 | Posture/mode shim | `skills/posture/` |
 | Support skills (/tactical-hydration, /consolidate) | `skills/tactical-hydration/`, `skills/consolidate/` |
-| Quick-fire signal emission | folded into `hooks/sidecar-router.py` (emits `<sidecar/>` tags in `additionalContext`) |
+| Lane directive injection | folded into `hooks/sidecar-router.py` (injects readable lane directives into `additionalContext`; model runs the lane inline; trailing `(arrow: …)` provenance line stays greppable) |
 | Metapair registry | `specs/metapairs.md` |
 | Council resonance mapping | `references/council-resonance.md` |
 

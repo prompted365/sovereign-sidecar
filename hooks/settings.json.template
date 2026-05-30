@@ -1,31 +1,31 @@
 {
-  "_comment_": "Sovereign Sidecar — UserPromptSubmit hook registration template.",
-  "_usage_": "Copy the relevant block into ~/.claude/settings.json (user scope) or .claude/settings.json (project scope). The SIDECAR_ROOT path should resolve to wherever the sidecar domain is installed; default assumes the canonical_developer install.",
-  "_chamber_": "The hook discovers the chamber via $SIDECAR_CHAMBER env var, ~/.sidecar/chamber.yaml, ~/.claude/sidecar/chamber.yaml, or .sidecar/chamber.yaml — copy specs/chamber.yaml.example to one of those paths and edit disposition_bias to taste.",
-  "_failsoft_": "The hook is fail-soft by design: missing chamber, bad stdin, or any exception emits empty hook output. User prompts are never blocked.",
+  "_comment_": "Sovereign Sidecar — hook registration template.",
+  "_usage_": "Copy the 'hooks' block into ~/.claude/settings.json (user scope) or .claude/settings.json (project scope). Replace the /Users/YOU/... path with your actual install path (or run `sidecar init`, which prints/applies it). The UserPromptSubmit lane is the always-on default; the lanes under _repo_state_hooks_ are the opt-in repo-native layer — merge them into 'hooks' if you want pre-mutation / post-tool / subagent-verify receipts.",
+  "_chamber_": "The hook discovers the chamber via $SIDECAR_CHAMBER, ~/.sidecar/chamber.yaml, ~/.claude/sidecar/chamber.yaml, or .sidecar/chamber.yaml. Run `sidecar init` or copy specs/chamber.yaml.example to one of those paths and tune disposition_bias.",
+  "_failsoft_": "Fail-soft by design: missing chamber, bad stdin, or any exception emits empty output. Prompts and tool calls are never blocked.",
+  "_model_consumer_note_": "The router injects a READABLE lane directive into hookSpecificOutput.additionalContext — the model runs the lane inline. A trailing '(arrow: ...)' provenance line stays greppable for tooling. There is NO machine KV tag and NO required downstream consumer hook (an earlier design used one; the consumer was never universal, so the model is now the consumer).",
 
   "hooks": {
     "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /Users/YOU/canonical/canonical_developer/sovereign-sidecar/hooks/sidecar-router.py"
-          }
-        ]
-      }
+      { "hooks": [ { "type": "command", "command": "python3 /Users/YOU/canonical/canonical_developer/sovereign-sidecar/hooks/sidecar-router.py" } ] }
+    ]
+  },
+
+  "_repo_state_hooks_": {
+    "_comment_": "Opt-in repo-native layer. The same router branches on hook_event_name and emits ADVISORY receipts (no blocking in v1): PreToolUse = pre-mutation guard on risky file/bash intent; PostToolUse = evidence-digestion nudge; SubagentStop = verify-don't-trust-done. The PreToolUse/PostToolUse matcher is scoped to mutating tools so the router does not fire on reads/searches. Merge any of these into the 'hooks' object above to enable.",
+    "PreToolUse": [
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [ { "type": "command", "command": "python3 /Users/YOU/canonical/canonical_developer/sovereign-sidecar/hooks/sidecar-router.py" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [ { "type": "command", "command": "python3 /Users/YOU/canonical/canonical_developer/sovereign-sidecar/hooks/sidecar-router.py" } ] }
+    ],
+    "SubagentStop": [
+      { "hooks": [ { "type": "command", "command": "python3 /Users/YOU/canonical/canonical_developer/sovereign-sidecar/hooks/sidecar-router.py" } ] }
     ]
   },
 
   "_alt_env_var_form_": {
-    "_comment_": "If SIDECAR_ROOT is exported in your shell profile, you can use an env-var form. Note: Claude Code does not expand env vars in command strings; the command must be a literal path or a wrapper script that resolves it.",
-    "_wrapper_example_": "Create ~/.claude/cgg-runtime/scripts/sidecar-router-wrap.sh containing: #!/bin/bash; exec python3 $SIDECAR_ROOT/hooks/sidecar-router.py",
-    "_then_register_": "command: ~/.claude/cgg-runtime/scripts/sidecar-router-wrap.sh"
-  },
-
-  "_downstream_consumer_pattern_": {
-    "_comment_": "A downstream hook (or the consuming harness itself) can extract signal tags from the additionalContext that the sidecar router emits. Stable schema: <sidecar key=\"K\" target=\"T\" confidence=\"C\" chamber_bias=\"B\" />",
-    "_regex_": "<sidecar\\s+key=\"([^\"]+)\"\\s+target=\"([^\"]+)\"\\s+confidence=\"([0-9.]+)\"\\s+chamber_bias=\"([0-9.]+)\"\\s*/>",
-    "_example_extractor_": "Any UserPromptSubmit hook registered AFTER sidecar-router.py can scan stdin for the regex above and route to the named arrow."
+    "_comment_": "Claude Code does not expand env vars in command strings; use a literal path or a wrapper that resolves $SIDECAR_ROOT.",
+    "_wrapper_example_": "~/.claude/cgg-runtime/scripts/sidecar-router-wrap.sh: #!/bin/bash; exec python3 $SIDECAR_ROOT/hooks/sidecar-router.py"
   }
 }

@@ -67,6 +67,19 @@ check "posture-toggle" '{"prompt":"[Posture → OPS/DIRECT] go"}'               
 check "no-match"       '{"prompt":"what time is it"}'                                 ''
 check "fail-soft"      'not json at all'                                             ''
 
+# tic 308 — preflight lane fires on operator MOMENTUM (the pre-mutation moment).
+check "preflight-momentum"  '{"prompt":"make it happen"}'                            'PREFLIGHT lane'
+check "preflight-shipit"    '{"prompt":"ship it"}'                                   'PREFLIGHT lane'
+# tic 308 — runtime RECEIPT names the matched trigger (the "why it fired", brief #2).
+check "receipt-matched"     '{"prompt":"make it happen"}'                            '> chamber_bias'
+# tic 308 — over-fire fixes (NEGATIVE tests): ordinary engineering language must NOT fire.
+check "no-overfire-counter"  '{"prompt":"should we rename this variable"}'           ''
+check "no-overfire-delegate" '{"prompt":"break this function down into smaller helpers"}' ''
+# tic 308 — repo-state hooks (advisory). PreToolUse on a risky command fires; safe is silent.
+check "pretool-risky"  '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push origin main"}}' 'preflight_pre_mutation'
+check "pretool-safe"   '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"README.md"}}'           ''
+check "subagentstop-verify" '{"hook_event_name":"SubagentStop"}'                     'delegate_verify_dont_trust_done'
+
 # Outpost boundary: inside a governed zone ($HERE is under canonical's .ticzone)
 # the sidecar defers and stays silent — unless SIDECAR_IGNORE_ZONE forces it.
 ZP='{"prompt":"this is done and shipped, what did we miss?"}'

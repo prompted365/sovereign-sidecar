@@ -42,45 +42,49 @@ disposition: |
 #   fires          — semantic trigger condition
 #   stance         — arrow's adversarial / cooperative / metabolizing posture
 #
-# Tune disposition_bias values to match the current session's needs:
-#   0.0-0.3 = aggressive (fire easily; useful when arrow is currently load-bearing)
-#   0.4-0.6 = balanced (fire on moderate evidence)
-#   0.7-0.9 = conservative (fire only on strong evidence; useful when arrow noise dominates)
-#   1.0     = suppressed (never fire this session)
+# Tune disposition_bias to match the session's needs. Router confidence scales with how many
+# trigger patterns match: ONE match ≈ base×0.65 (~0.50), TWO ≈ base×0.85 (~0.68), THREE+ ≈ base
+# (~0.78). An arrow fires when confidence > bias. So in practice:
+#   bias 0.0-0.45 = aggressive   (a single trigger match fires it)
+#   bias 0.5-0.65 = balanced     (needs ~two corroborating matches)
+#   bias 0.7-0.9  = conservative (needs a strong, multi-signal match)
+#   bias 1.0      = suppressed   (never fires this session)
+# (Pre-tic-308 the gate was inert — single matches fired everything regardless of bias. These
+# defaults assume the recalibrated confidence gate in hooks/sidecar-router.py:assess_intent.)
 
 arrows:
   ingest:
     pointer: "skills/ingest/SKILL.md"
     tom_briefing: "metabolize — fire when external context enters the session"
-    disposition_bias: 0.2
+    disposition_bias: 0.4
     fires: "before_context_enters"
     stance: "metabolize"
 
   tom:
     pointer: "skills/tom/SKILL.md"
     tom_briefing: "centroid-preserving re-expression — fire before publication or audience shift"
-    disposition_bias: 0.3
+    disposition_bias: 0.45
     fires: "before_expression"
     stance: "centroid_preserving"
 
   complement:
     pointer: "skills/complement/SKILL.md"
     tom_briefing: "topological closure — fire when a move lands and exposed surfaces aren't named"
-    disposition_bias: 0.7
+    disposition_bias: 0.6
     fires: "after_move_lands"
     stance: "cooperative_topological"
 
   counter:
     pointer: "skills/counter/SKILL.md"
     tom_briefing: "adversarial falsification — fire before committing to an architecture or irreversible decision"
-    disposition_bias: 0.4
+    disposition_bias: 0.5
     fires: "before_move_commits"
     stance: "adversarial_falsifying"
 
   citation_intel:
     pointer: "skills/citation-intel/SKILL.md"
     tom_briefing: "publication readiness — fire before publishing content to AI-searchable surfaces"
-    disposition_bias: 0.1
+    disposition_bias: 0.5
     fires: "before_publication"
     stance: "readiness_check"
 
@@ -92,11 +96,18 @@ arrows:
     stance: "contract_declaration"
 
   delegate:
-    pointer: "hooks/sidecar-router.py"   # directive lives in LANE_DIRECTIVES (no separate SKILL.md yet)
+    pointer: "skills/delegate/SKILL.md"   # full protocol in the skill; compressed directive in LANE_DIRECTIVES
     tom_briefing: "govern the swarm spec — fire before fanning a goal out to subagents"
-    disposition_bias: 0.5
+    disposition_bias: 0.55
     fires: "before_fan_out"
     stance: "swarm_governing"
+
+  preflight:
+    pointer: "skills/preflight/SKILL.md"
+    tom_briefing: "repo-native pre-mutation gate — fire on operator momentum before the agent mutates"
+    disposition_bias: 0.4
+    fires: "before_mutation"
+    stance: "preflight_obstacle_avoidance"
 
 # ----------------------------------------------------------------------
 # Support arrows — not user-facing; fill the chamber

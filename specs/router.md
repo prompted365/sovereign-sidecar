@@ -1,6 +1,6 @@
 # Router Specification
 
-The router is the sidecar's single hook entry point. One `UserPromptSubmit` hook → one router skill → chamber read → intent match → optional quick-fire signal. Everything else is pointer-chased from the chamber.
+The router is the sidecar's single hook entry point. One `UserPromptSubmit` hook → one router skill → chamber read → intent match → optional lane directive injection. Everything else is pointer-chased from the chamber.
 
 ## Hook Registration
 
@@ -22,7 +22,7 @@ The router is the sidecar's single hook entry point. One `UserPromptSubmit` hook
 }
 ```
 
-The hook receives the user message JSON on stdin. It reads the chamber, assesses intent, and optionally emits quick-fire signal tags.
+The hook receives the user message JSON on stdin. It reads the chamber, assesses intent, and — when an arrow is warranted — injects the matched lane's protocol as a readable directive into `hookSpecificOutput.additionalContext`.
 
 ## Intent Assessment
 

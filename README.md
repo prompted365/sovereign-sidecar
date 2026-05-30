@@ -1,18 +1,20 @@
 # Sovereign Sidecar
 
-### A hangar for your harnesses — posture-aware governance for any agent stack.
+**Category: Runtime Preflight for AI Agents**
 
-You already have a stack: skills, hooks, an orchestrator, your own way of working an
-agent. The **Sovereign Sidecar** is the shim that rides alongside it — reading what
-you're *about* to do and quietly equipping it with posture-aware, mode-governed
-judgment. No new orchestrator. No rebuild. No persistence to manage. It bolts onto
-the vehicle you already drive.
+> **a repo-native preflight mentor that catches what your agent skips before it ships, delegates, publishes, or mutates**
 
-> **Two names, one primitive.** In the technical lane this is the **sidecar** — a
-> governance shim attached to a primary skill stack. In the lane where you actually
-> meet it, it's a **hangar for harnesses**: the place tinkerers store, tune, and
-> maintain their agent rigs. Same thing, two registers — the technical name says what
-> it *is*, the market name says how you *encounter* it.
+In-flight obstacle avoidance for AI agents. You already have a stack: skills, hooks,
+an orchestrator, your own way of working an agent. The **Sovereign Sidecar** bolts
+onto the vehicle you already drive — reading what you're *about* to do and quietly
+surfacing the move your agent was most likely to skip.
+
+No new orchestrator. No rebuild. No persistence to manage.
+
+> **Also known as:** the **hangar for harnesses** — the place tinkerers store, tune,
+> and maintain their agent rigs. Same primitive, two registers: the technical name says
+> what it *is*, the market name says how you *encounter* it. If you're here on a
+> Saturday afternoon curious about posture-aware agent work, this is the door.
 
 ---
 
@@ -46,7 +48,7 @@ recipes end at *push/mutate*; the sidecar ends at *whether the move coheres*.
 | Arrow | Fires | Gives you |
 |---|---|---|
 | `/ingest` | before external context enters | metabolized context (no cargo-culting) |
-| `/tom` | before you publish/express | centroid-preserving re-expression |
+| `/tom` | before you publish/express | re-expressed content — meaning preserved, audience conformed |
 | `/complement` | after a move lands | the surfaces the move just exposed |
 | `/counter` | before a decision commits | the strongest case against it |
 | `/citation-intel` | before publication | extractability / readiness report |
@@ -97,6 +99,19 @@ substrate:
 | promoting a lesson to a rule | `/review` + the CogPR queue | (persistent) |
 
 The sidecar is the on-ramp. You don't have to take it — but the door is there.
+
+---
+
+## Lineage / Depth
+
+The arrows in the quiver are Breyden-originated governance primitives. For those
+who want the spine underneath:
+
+- **/tom** runs **centroid-preserving re-expression** — holds the source content's invariant meaning intact while conforming its expression to a different audience, density, or purpose. Not summarization. Not paraphrase. The centroid survives.
+- **/complement** runs **topological closure inference** — after a move lands, it asks what the move just structurally exposed. Direction-agnostic: the complement may be inverse, adjacent, upstream prerequisite, downstream proof obligation, or scope correction.
+- **Council resonance** maps each arrow to the [Ubiquity Council](references/council-resonance.md) postures that ground it — the deeper frame the sidecar is an outpost of.
+
+These terms are not required to use the package. They are load-bearing for the upgrade lane: when you start wishing the sidecar remembered more, these are the concepts that scale into the full Ubiquity substrate.
 
 ---
 
