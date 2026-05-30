@@ -106,8 +106,10 @@ echo "chamber-v2 degradation ladder:"
 
 # (a) L1+L2 — the v0.2 worked example carries a backdrop + per-arrow live_context.
 #     Firing a lane must surface the constitutional backdrop and the live-context line.
+# NOTE: the router emits JSON, so the '·' separator is escaped as · — grep for the
+# ASCII phrase, not the literal middle-dot, or the match silently never fires.
 L1L2_OUT="$(run '{"prompt":"lets ship it — make it happen"}')"
-if printf '%s' "$L1L2_OUT" | grep -q 'sidecar · backdrop'; then
+if printf '%s' "$L1L2_OUT" | grep -q 'Constitutional state for this session'; then
   echo "  ok   l1l2-backdrop (v0.2 chamber surfaces constitutional backdrop)"; pass=$((pass + 1))
 else
   echo "  FAIL l1l2-backdrop — expected backdrop preamble, got: $L1L2_OUT"; fail=$((fail + 1))
@@ -146,15 +148,19 @@ else
 fi
 rm -rf "$L1DIR"
 
-# (c) no-chamber — SIDECAR_CHAMBER points at a path that does not exist. The router
-#     must fall back fail-soft: no arrows fire (no chamber to gate against) and it
-#     stays silent — never crashes, never worse than v1.
-NC_OUT="$( cd "$NONZONE" && printf '%s' '{"prompt":"make it happen"}' | SIDECAR_CHAMBER="/nonexistent/sidecar/chamber.yaml" python3 "$ROUTER" )"
+# (c) no-chamber — degradation rung 3: NO chamber discoverable anywhere. We must
+#     defeat the default-discovery fallback (~/.sidecar, ~/.claude/sidecar, ./.sidecar),
+#     so we run with an EMPTY $HOME and from the NONZONE dir (no ./.sidecar) and leave
+#     SIDECAR_CHAMBER unset. find_chamber_path() then returns None → chamber None → no
+#     arrows fire → silent. Never crashes, never worse than v1.
+EMPTYHOME="$(mktemp -d)"
+NC_OUT="$( cd "$NONZONE" && printf '%s' '{"prompt":"make it happen"}' | env -u SIDECAR_CHAMBER HOME="$EMPTYHOME" python3 "$ROUTER" )"
 if [ -z "$NC_OUT" ]; then
-  echo "  ok   no-chamber-silent (missing chamber → fail-soft silence)"; pass=$((pass + 1))
+  echo "  ok   no-chamber-silent (no chamber discoverable → fail-soft silence)"; pass=$((pass + 1))
 else
   echo "  FAIL no-chamber-silent — expected silence, got: $NC_OUT"; fail=$((fail + 1))
 fi
+rmdir "$EMPTYHOME" 2>/dev/null
 # no-chamber posture toggle must STILL work (toggle detection is chamber-independent).
 NC_POS="$( cd "$NONZONE" && printf '%s' '{"prompt":"[Posture → OPS/META] audit"}' | SIDECAR_CHAMBER="/nonexistent/chamber.yaml" python3 "$ROUTER" )"
 if printf '%s' "$NC_POS" | grep -q 'Posture shift to OPS/META'; then
