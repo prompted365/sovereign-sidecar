@@ -145,70 +145,161 @@ def load_chamber(path):
 
 
 def _minimal_yaml_parse(path):
-    """Minimal YAML subset parser for chamber files."""
+    """General indentation-based YAML-subset parser (PyYAML fallback).
+
+    Handles the full v0.2 chamber shape WITHOUT a PyYAML dependency: nested
+    mappings (posture/mode/stakes/repo_shape/arrows/disposition), block scalars
+    (`key: |`), block + inline lists (`- item` / `[a, b]`), and typed scalars
+    (int/float/bool/null/quoted-string). The earlier flat parser only reached
+    `arrows.<k>.disposition_bias` + top-level scalars and would silently drop the
+    v0.2 nesting — which would make the router blind to derived bias, live_context,
+    mode, and layers_present whenever PyYAML was absent. Fail-soft: any error → None.
+    """
     try:
         with open(path) as f:
-            lines = f.readlines()
+            raw_lines = f.readlines()
+    except Exception:
+        return None
+    # Pre-tokenize: keep non-blank, non-comment lines as (indent, text).
+    toks = []
+    for raw in raw_lines:
+        line = raw.rstrip("\n")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        toks.append((indent, line.strip(), line))
+    try:
+        value, _ = _parse_block(toks, 0, 0)
+        return value if isinstance(value, dict) else {"_root": value}
     except Exception:
         return None
 
-    result = {"arrows": {}, "support": {}}
-    current_section = None
-    current_arrow = None
-    for raw in lines:
-        line = raw.rstrip("\n")
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        indent = len(line) - len(line.lstrip(" "))
 
-        # Top-level `muted:` list — inline [a, b] form OR following `- item` lines.
-        if indent == 0 and stripped.startswith("muted:"):
-            current_section = "muted"
-            current_arrow = None
-            _, _, inline = stripped.partition(":")
-            inline = inline.strip()
-            muted_items = []
-            if inline.startswith("[") and inline.endswith("]"):
-                for tok in inline[1:-1].split(","):
-                    tok = tok.strip().strip('"').strip("'")
-                    if tok:
-                        muted_items.append(tok)
-            result["muted"] = muted_items
-            continue
+def _scalarize(s):
+    """Parse a YAML scalar token into a Python value."""
+    s = s.strip()
+    if s == "" or s in ("~", "null", "Null", "NULL"):
+        return None
+    if s in ("true", "True", "TRUE"):
+        return True
+    if s in ("false", "False", "FALSE"):
+        return False
+    if (s[0] == s[-1]) and s[0] in ("'", '"') and len(s) >= 2:
+        return s[1:-1]
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1].strip()
+        if not inner:
+            return []
+        return [_scalarize(t) for t in inner.split(",")]
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    return s
 
-        # Following `- item` lines for a top-level `muted:` block.
-        if current_section == "muted" and indent >= 2 and stripped.startswith("-"):
-            item = stripped[1:].strip().strip('"').strip("'")
-            if item:
-                result.setdefault("muted", []).append(item)
-            continue
 
-        if indent == 0 and ":" in line:
-            key, _, val = stripped.partition(":")
-            key = key.strip()
-            val = val.strip().strip('"').strip("'")
-            if key in ("arrows", "support"):
-                current_section = key
-                current_arrow = None
+def _parse_block(toks, i, indent):
+    """Parse the mapping/list block at >= `indent`, starting at token i.
+
+    Returns (value, next_index). Block scalars and nested structures are handled
+    recursively by indentation.
+    """
+    # Detect list vs mapping by the first token at this indent.
+    if i >= len(toks):
+        return None, i
+    first_indent, first_text, _ = toks[i]
+    if first_text.startswith("- "):
+        return _parse_list(toks, i, indent)
+    if first_text == "-":
+        return _parse_list(toks, i, indent)
+
+    result = {}
+    while i < len(toks):
+        cur_indent, text, _ = toks[i]
+        if cur_indent < indent:
+            break
+        if cur_indent > indent:
+            # Shouldn't happen at a mapping root; skip defensively.
+            i += 1
+            continue
+        if text.startswith("- ") or text == "-":
+            break
+        key, _, val = text.partition(":")
+        key = key.strip()
+        val = val.strip()
+        if val == "|" or val == "|-" or val == ">" or val == ">-":
+            # Block scalar — collect deeper-indented lines literally.
+            block_lines = []
+            j = i + 1
+            block_indent = None
+            while j < len(toks):
+                ji, _, jraw = toks[j]
+                if ji <= indent:
+                    break
+                if block_indent is None:
+                    block_indent = len(jraw) - len(jraw.lstrip(" "))
+                block_lines.append(jraw[block_indent:] if len(jraw) >= block_indent else jraw.strip())
+                j += 1
+            result[key] = "\n".join(block_lines)
+            i = j
+        elif val == "":
+            # Nested block (mapping or list) — or empty value. NOTE: PyYAML dumps a
+            # block sequence at the SAME indent as its parent key (`signals:` then
+            # `- item` both at indent 2), so a list child is NOT necessarily deeper.
+            nxt = toks[i + 1] if i + 1 < len(toks) else None
+            if nxt is not None and (nxt[1].startswith("- ") or nxt[1] == "-") and nxt[0] >= indent:
+                child, ni = _parse_list(toks, i + 1, nxt[0])
+                result[key] = child
+                i = ni
+            elif nxt is not None and nxt[0] > indent:
+                child, ni = _parse_block(toks, i + 1, nxt[0])
+                result[key] = child
+                i = ni
             else:
-                # Any other top-level key ends the current section and is stored as a scalar.
-                current_section = None
-                current_arrow = None
-                result[key] = val if val else None
-        elif indent == 2 and stripped.endswith(":") and current_section in ("arrows", "support"):
-            current_arrow = stripped[:-1]
-            result[current_section][current_arrow] = {}
-        elif indent >= 4 and ":" in line and current_arrow:
-            key, _, val = stripped.partition(":")
-            key = key.strip()
-            val = val.strip().strip('"').strip("'")
-            try:
-                val_parsed = float(val) if "." in val else int(val)
-            except ValueError:
-                val_parsed = val
-            result[current_section][current_arrow][key] = val_parsed
-    return result
+                result[key] = None
+                i += 1
+        else:
+            result[key] = _scalarize(val)
+            i += 1
+    return result, i
+
+
+def _parse_list(toks, i, indent):
+    """Parse a `- item` list block. Returns (list, next_index)."""
+    items = []
+    while i < len(toks):
+        cur_indent, text, raw = toks[i]
+        if cur_indent < indent or not (text.startswith("- ") or text == "-"):
+            break
+        item_text = text[2:].strip() if text.startswith("- ") else ""
+        if item_text == "":
+            # Nested block under the dash.
+            if i + 1 < len(toks) and toks[i + 1][0] > indent:
+                child, ni = _parse_block(toks, i + 1, toks[i + 1][0])
+                items.append(child)
+                i = ni
+            else:
+                items.append(None)
+                i += 1
+        elif ":" in item_text and not (item_text[0] in ("'", '"')):
+            # Inline mapping start inside a list item — treat the dash line as the
+            # first key of a mapping that may continue on deeper-indented lines.
+            synth = [(indent + 2, item_text, " " * (indent + 2) + item_text)]
+            j = i + 1
+            while j < len(toks) and toks[j][0] > indent:
+                synth.append(toks[j])
+                j += 1
+            child, _ = _parse_block(synth, 0, indent + 2)
+            items.append(child)
+            i = j
+        else:
+            items.append(_scalarize(item_text))
+            i += 1
+    return items, i
 
 
 # ----------------------------------------------------------------------
@@ -322,10 +413,77 @@ POSTURE_TOGGLE_PATTERN = re.compile(
 )
 
 
+def _chamber_mode(chamber):
+    """Return (mode_value, mode_source). v0.2 carries a mode dict; v0.1 only a
+    posture string, from which mode is at best HINTED (never resolved)."""
+    m = chamber.get("mode") if isinstance(chamber, dict) else None
+    if isinstance(m, dict):
+        return m.get("value"), m.get("source", "unresolved")
+    p = chamber.get("posture") if isinstance(chamber, dict) else None
+    if isinstance(p, dict):
+        pv = p.get("value")
+        if isinstance(pv, str) and "/" in pv:
+            return pv.split("/", 1)[1].strip().upper(), "hinted"
+    if isinstance(p, str) and "/" in p:
+        return p.split("/", 1)[1].strip().upper(), "hinted"
+    return None, "unresolved"
+
+
+def _chamber_stakes(chamber):
+    s = chamber.get("stakes") if isinstance(chamber, dict) else None
+    if isinstance(s, dict):
+        return s.get("level")
+    return None
+
+
+def _runtime_modulation(arrow_key, chamber):
+    """Runtime posture/mode/stakes bias delta — applied ONLY to v0.1 chambers whose
+    `bias` was NOT derived at fill (v0.2 chambers already fold this in; re-applying
+    would double-count). Mirrors chamber_fill.derive_biases so the two layers agree."""
+    delta = 0.0
+    mode, src = _chamber_mode(chamber)
+    if src in ("resolved", "toggle") and mode:
+        if mode == "META":
+            if arrow_key == "preflight":
+                delta += 0.25
+            elif arrow_key in ("counter", "complement"):
+                delta -= 0.10
+        elif mode == "DIRECT":
+            if arrow_key == "preflight":
+                delta -= 0.10
+    level = _chamber_stakes(chamber)
+    if level == "high" and arrow_key in ("preflight", "counter"):
+        delta -= 0.15
+    elif level == "elevated" and arrow_key in ("preflight", "counter"):
+        delta -= 0.07
+    return delta
+
+
+def _effective_bias(arrow_key, chamber_arrow, chamber):
+    """Resolve the gate threshold for an arrow. Returns (bias, derived).
+
+    v0.2: trust the chamber's derived `bias` (chamber_fill already folded
+    posture/mode/stakes/repo_shape in per §4). v0.1: raw disposition_bias + a
+    runtime modulation so a hand-authored legacy chamber still gets posture
+    awareness. v0.1 chambers with neither field fall to the 0.5 neutral default,
+    preserving exact pre-v2 behavior."""
+    if isinstance(chamber_arrow, dict) and "bias" in chamber_arrow:
+        try:
+            return float(chamber_arrow["bias"]), True
+        except (TypeError, ValueError):
+            pass
+    try:
+        base = float((chamber_arrow or {}).get("disposition_bias", 0.5))
+    except (TypeError, ValueError):
+        base = 0.5
+    base += _runtime_modulation(arrow_key, chamber)
+    return max(0.0, min(1.0, base)), False
+
+
 def assess_intent(prompt, chamber):
-    """Return list of (arrow_key, trigger_verb, target, confidence, chamber_bias)
-    tuples for arrows whose pattern-match confidence exceeds their chamber
-    disposition_bias.
+    """Return list of (arrow_key, trigger_verb, target, confidence, chamber_bias,
+    matched, live_context) tuples for arrows whose pattern-match confidence exceeds
+    their EFFECTIVE bias (v0.2 derived bias, or v0.1 disposition_bias + modulation).
 
     confidence is base_confidence × match_density (capped at 1.0).
     target is derived from the strongest matching pattern's named group or
@@ -344,12 +502,9 @@ def assess_intent(prompt, chamber):
         if _is_muted(arrow_key, muted):
             continue
         # Map snake_case arrow_key to chamber key (citation_intel → citation_intel)
-        chamber_arrow = arrows.get(arrow_key, {})
-        bias_raw = chamber_arrow.get("disposition_bias", 0.5)
-        try:
-            bias = float(bias_raw)
-        except (TypeError, ValueError):
-            bias = 0.5
+        chamber_arrow = arrows.get(arrow_key, {}) or {}
+        bias, _derived = _effective_bias(arrow_key, chamber_arrow, chamber)
+        live_context = chamber_arrow.get("live_context") if isinstance(chamber_arrow, dict) else None
 
         match_count = 0
         first_match_target = None
@@ -379,9 +534,10 @@ def assess_intent(prompt, chamber):
             target = _derive_target(arrow_key, first_match_target or "active_move")
             # Carry the raw matched substring for the runtime receipt — it is the "why it
             # fired" the user sees, turning a false-fire from silent noise into a rejectable
-            # signal (entourage brief #2).
+            # signal (entourage brief #2). Also carry the per-arrow live_context (v0.2): the
+            # L2-enriched "what this lane means RIGHT NOW for THIS work" line.
             fires.append((arrow_key, trigger_verb, target, confidence, bias,
-                          first_match_target or ""))
+                          first_match_target or "", live_context or ""))
 
     return fires
 
@@ -558,7 +714,7 @@ LANE_DIRECTIVES = {
 }
 
 
-def build_lane_directive(arrow_key, trigger_verb, confidence, bias, matched=""):
+def build_lane_directive(arrow_key, trigger_verb, confidence, bias, matched="", live_context=""):
     """Build a readable lane directive. Returns str, or None for unknown arrows.
 
     The trailing RECEIPT line stays human-readable but keeps the `<arrow>_<verb>`
@@ -566,14 +722,21 @@ def build_lane_directive(arrow_key, trigger_verb, confidence, bias, matched=""):
     without parsing a machine-only dict. It also names the matched trigger substring
     — the "why it fired" — so the user can reject a mis-fire at a glance instead of
     learning to skim past silent noise (entourage brief #2).
+
+    v0.2: if the chamber carries a per-arrow `live_context` (the L2-enriched "what
+    this lane means RIGHT NOW for THIS work"), it is woven in just before the protocol
+    so the generic lane body is anchored to the session's actual surface.
     """
     body = LANE_DIRECTIVES.get(arrow_key)
     if not body:
         return None
     label = arrow_key.replace("_", "-")
     why = f' · matched "{matched}"' if matched else ""
+    lc = ""
+    if live_context:
+        lc = f"Live context (this session): {str(live_context).strip()}\n"
     return (
-        f"[sidecar · {label}] {body}\n"
+        f"[sidecar · {label}] {lc}{body}\n"
         f"  (arrow: {arrow_key}_{trigger_verb}{why} · confidence {confidence:.2f} "
         f"> chamber_bias {bias:.2f})"
     )
@@ -831,12 +994,13 @@ def handle_user_prompt(payload, chamber=None):
         directives.append(build_posture_directive(*posture))
 
     # Arrow firing: each warranted arrow injects its lane protocol as a directive,
-    # with a receipt naming the matched trigger (the "why it fired").
+    # with a receipt naming the matched trigger (the "why it fired") and any v0.2
+    # per-arrow live_context.
     if chamber:
         fires = assess_intent(prompt, chamber)
-        for arrow_key, trigger_verb, target, confidence, bias, matched in fires:
+        for arrow_key, trigger_verb, target, confidence, bias, matched, live_context in fires:
             directives.append(
-                build_lane_directive(arrow_key, trigger_verb, confidence, bias, matched)
+                build_lane_directive(arrow_key, trigger_verb, confidence, bias, matched, live_context)
             )
 
     directives = [d for d in directives if d]
@@ -848,8 +1012,60 @@ def handle_user_prompt(payload, chamber=None):
         f"[Sovereign Sidecar] Your message activated {len(directives)} governance "
         f"{plural}. Run each inline before your main response, then continue:"
     )
-    additional_context = header + "\n\n" + "\n\n".join(directives)
+    backdrop = build_constitutional_backdrop(chamber)
+    parts = [header]
+    if backdrop:
+        parts.append(backdrop)
+    parts.extend(directives)
+    additional_context = "\n\n".join(parts)
     return _hook_context("UserPromptSubmit", additional_context)
+
+
+def build_constitutional_backdrop(chamber):
+    """Compose the v0.2 constitutional-backdrop preamble the lanes run against.
+
+    This is the v2 point: the chamber is the sidecar's only organ for holding
+    constitutional state (the stateless cousin of harmony disposition). When the
+    chamber carries an L2 disposition / resolved mode / stakes, surface it so the
+    firing lanes are anchored to WHAT THIS WORK IS, not just the matched pattern.
+    Returns "" for a bare v0.1 chamber (no backdrop to show) — fail-soft."""
+    if not isinstance(chamber, dict):
+        return ""
+    bits = []
+    mode, mode_src = _chamber_mode(chamber)
+    stakes = _chamber_stakes(chamber)
+    layers = chamber.get("layers_present") or []
+    posture = chamber.get("posture")
+    posture_v = posture.get("value") if isinstance(posture, dict) else posture
+
+    disp = chamber.get("disposition")
+    disp_text = disp.get("text") if isinstance(disp, dict) else (disp if isinstance(disp, str) else None)
+
+    # A v0.1 chamber has no mode dict, no stakes, no layers, and only a one-line
+    # disposition string — nothing constitutional to surface beyond the lanes.
+    if not (isinstance(chamber.get("mode"), dict) or stakes or layers):
+        return ""
+
+    line_bits = []
+    if posture_v:
+        line_bits.append(f"posture {posture_v}")
+    if mode:
+        suffix = "" if mode_src in ("resolved", "toggle") else f" ({mode_src} — UNRESOLVED, gate conservatively)"
+        line_bits.append(f"mode {mode}{suffix}")
+    if stakes:
+        line_bits.append(f"stakes {stakes}")
+    if layers:
+        line_bits.append("layers " + "+".join(layers))
+    if line_bits:
+        bits.append("· ".join(line_bits))
+
+    if disp_text and "L1-only" not in disp_text:
+        bits.append(str(disp_text).strip())
+
+    if not bits:
+        return ""
+    body = "\n".join(bits)
+    return f"[sidecar · backdrop] Constitutional state for this session:\n{body}"
 
 
 # ----------------------------------------------------------------------

@@ -52,6 +52,14 @@ The router defers to the real federation when present: on every prompt it walks 
 
 ### Chamber
 
+> **v0.2 (tic 310):** The chamber is now **layered** — the sidecar's only organ for holding
+> constitutional state (the stateless cousin of harmony disposition). L1 structured base
+> (cheap, always-on: cwd/git/repo-shape → posture/stakes/hotspots) + L2 LLM enrich (triggered:
+> resolves mode, writes the disposition backdrop, per-arrow `live_context`, and DERIVES biases).
+> Spec: [`specs/chamber-v2.md`](specs/chamber-v2.md). Fill: [`hooks/chamber_fill.py`](hooks/chamber_fill.py).
+> Example: `specs/chamber.yaml.example` (v0.2); `specs/chamber.v0.1.example` is the legacy snapshot.
+> The v0.1 description below is retained as the historical baseline.
+
 The chamber is NOT a context dump. It is a pointer surface with disposition:
 
 ```yaml

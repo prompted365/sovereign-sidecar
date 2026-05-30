@@ -96,6 +96,73 @@ else
   echo "  FAIL zone-override — expected fire with override, got: $ovr_out"; fail=$((fail + 1))
 fi
 
+# ----------------------------------------------------------------------
+# Chamber-v2 degradation ladder (specs/chamber-v2.md §2): the sidecar must be
+# fail-soft across L1+L2 → L1-only → no-chamber, never WORSE than v1 when inputs
+# are missing. All run from the NONZONE dir (zone-deferral off), zero model calls.
+# ----------------------------------------------------------------------
+echo ""
+echo "chamber-v2 degradation ladder:"
+
+# (a) L1+L2 — the v0.2 worked example carries a backdrop + per-arrow live_context.
+#     Firing a lane must surface the constitutional backdrop and the live-context line.
+L1L2_OUT="$(run '{"prompt":"lets ship it — make it happen"}')"
+if printf '%s' "$L1L2_OUT" | grep -q 'sidecar · backdrop'; then
+  echo "  ok   l1l2-backdrop (v0.2 chamber surfaces constitutional backdrop)"; pass=$((pass + 1))
+else
+  echo "  FAIL l1l2-backdrop — expected backdrop preamble, got: $L1L2_OUT"; fail=$((fail + 1))
+fi
+if printf '%s' "$L1L2_OUT" | grep -q 'Live context'; then
+  echo "  ok   l1l2-live-context (per-arrow live_context woven into directive)"; pass=$((pass + 1))
+else
+  echo "  FAIL l1l2-live-context — expected 'Live context', got: $L1L2_OUT"; fail=$((fail + 1))
+fi
+
+# (b) L1-only — generate an L1-only chamber from a temp money-path repo (no enrich,
+#     no model call). Mode must be UNRESOLVED and the router must STILL fire (shallower,
+#     not blind) and flag the unresolved mode so it gates conservatively.
+L1DIR="$(mktemp -d)"
+mkdir -p "$L1DIR/src"
+printf 'export async function processCharge(){ await db.charges.insert({}); }\n' > "$L1DIR/src/charge.ts"
+printf 'export async function processRefund(){ await db.refunds.insert({}); }\n' > "$L1DIR/src/refund.ts"
+L1CH="$L1DIR/chamber.yaml"
+python3 "$HERE/hooks/chamber_fill.py" --root "$L1DIR" --out "$L1CH" --no-enrich \
+  --now 2026-01-01T00:00:00Z >/dev/null 2>&1
+L1_OUT="$( cd "$NONZONE" && printf '%s' '{"prompt":"make it happen"}' | SIDECAR_CHAMBER="$L1CH" python3 "$ROUTER" )"
+if printf '%s' "$L1_OUT" | grep -q 'PREFLIGHT lane'; then
+  echo "  ok   l1only-fires (L1-only chamber still fires the preflight lane)"; pass=$((pass + 1))
+else
+  echo "  FAIL l1only-fires — expected PREFLIGHT lane, got: $L1_OUT"; fail=$((fail + 1))
+fi
+if printf '%s' "$L1_OUT" | grep -q 'UNRESOLVED'; then
+  echo "  ok   l1only-unresolved (mode flagged UNRESOLVED → gate conservatively)"; pass=$((pass + 1))
+else
+  echo "  FAIL l1only-unresolved — expected UNRESOLVED note, got: $L1_OUT"; fail=$((fail + 1))
+fi
+if printf '%s' "$L1CH" | grep -q "chamber.yaml" && grep -q "layers_present" "$L1CH"; then
+  echo "  ok   l1only-written (chamber_fill produced an L1 chamber)"; pass=$((pass + 1))
+else
+  echo "  FAIL l1only-written — chamber_fill did not produce a chamber"; fail=$((fail + 1))
+fi
+rm -rf "$L1DIR"
+
+# (c) no-chamber — SIDECAR_CHAMBER points at a path that does not exist. The router
+#     must fall back fail-soft: no arrows fire (no chamber to gate against) and it
+#     stays silent — never crashes, never worse than v1.
+NC_OUT="$( cd "$NONZONE" && printf '%s' '{"prompt":"make it happen"}' | SIDECAR_CHAMBER="/nonexistent/sidecar/chamber.yaml" python3 "$ROUTER" )"
+if [ -z "$NC_OUT" ]; then
+  echo "  ok   no-chamber-silent (missing chamber → fail-soft silence)"; pass=$((pass + 1))
+else
+  echo "  FAIL no-chamber-silent — expected silence, got: $NC_OUT"; fail=$((fail + 1))
+fi
+# no-chamber posture toggle must STILL work (toggle detection is chamber-independent).
+NC_POS="$( cd "$NONZONE" && printf '%s' '{"prompt":"[Posture → OPS/META] audit"}' | SIDECAR_CHAMBER="/nonexistent/chamber.yaml" python3 "$ROUTER" )"
+if printf '%s' "$NC_POS" | grep -q 'Posture shift to OPS/META'; then
+  echo "  ok   no-chamber-posture (toggle detection survives missing chamber)"; pass=$((pass + 1))
+else
+  echo "  FAIL no-chamber-posture — expected posture directive, got: $NC_POS"; fail=$((fail + 1))
+fi
+
 echo ""
 echo "PASS=$pass FAIL=$fail"
 [ "$fail" -eq 0 ] || exit 1

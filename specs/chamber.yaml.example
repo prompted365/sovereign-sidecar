@@ -1,130 +1,153 @@
-# Sovereign Sidecar — Chamber v0.1 Example
+# Sovereign Sidecar — Chamber v0.2 Example (layered: structured base + LLM enrich)
 #
-# This is a session-scoped pointer surface. The router (hooks/sidecar-router.py)
-# reads this file at every UserPromptSubmit and injects the matched lane's PROTOCOL
-# as a readable directive — the model runs that lane inline — when arrow confidence
-# exceeds disposition_bias. (Earlier versions emitted a machine KV tag and relied on
-# a downstream hook; that consumer was never universal, so the model is now the
-# consumer and the directive carries the lane's actual reasoning.)
+# The chamber is the sidecar's ONLY organ for holding constitutional state — the
+# stateless cousin of Ubiquity's harmony disposition. It is NOT a cheap pointer index
+# to skim; crafting it well is the highest-leverage spend in the system. Full design:
+# specs/chamber-v2.md.
 #
-# Default discovery paths (router checks in order):
-#   1. $SIDECAR_CHAMBER (environment variable)
-#   2. ~/.sidecar/chamber.yaml
-#   3. ~/.claude/sidecar/chamber.yaml
-#   4. .sidecar/chamber.yaml (project-local)
+# DO NOT hand-tune this file as your daily driver. Generate it:
+#     python3 hooks/chamber_fill.py --trigger session_start --enrich \
+#         --root /path/to/your/repo --out ~/.sidecar/chamber.yaml
+# chamber_fill writes L1 (cheap, always-on, no LLM) and — when triggered — L2 (an
+# LLM enrich pass that resolves mode, writes the constitutional backdrop, and DERIVES
+# the per-arrow biases). This file is a worked EXAMPLE of the shape it produces.
 #
-# Copy this file to one of those locations and edit the disposition_bias
-# values + the disposition free-text to shape arrow firing for the current
-# session.
-
-schema_version: "0.1"
-
-# Current session posture. Updates on [Posture → X/Y] toggle detected by router.
-# Format: <ENG|OPS>/<DIRECT|META>
-posture: "ENG/DIRECT"
-
-# /tom-compressed session trajectory. Tells the quiver what it's biased toward,
-# not what to do. Refreshes on session start and posture shift only — not on
-# every message.
-disposition: |
-  implementation-heavy; bias complement+counter;
-  suppress ingest (context stable);
-  publication not imminent (citation-intel low priority)
-
-# ----------------------------------------------------------------------
-# Arrows — user-facing governance primitives
-# ----------------------------------------------------------------------
+# Router discovery paths (in order): $SIDECAR_CHAMBER, ~/.sidecar/chamber.yaml,
+# ~/.claude/sidecar/chamber.yaml, .sidecar/chamber.yaml.
 #
-# Each arrow has:
-#   pointer        — path to skill body (resolved relative to sidecar root)
-#   tom_briefing   — one-line description of when this arrow should fire NOW
-#   disposition_bias — threshold (0.0-1.0); arrow fires when router confidence > bias
-#   fires          — semantic trigger condition
-#   stance         — arrow's adversarial / cooperative / metabolizing posture
-#
-# Tune disposition_bias to match the session's needs. Router confidence scales with how many
-# trigger patterns match: ONE match ≈ base×0.65 (~0.50), TWO ≈ base×0.85 (~0.68), THREE+ ≈ base
-# (~0.78). An arrow fires when confidence > bias. So in practice:
-#   bias 0.0-0.45 = aggressive   (a single trigger match fires it)
-#   bias 0.5-0.65 = balanced     (needs ~two corroborating matches)
-#   bias 0.7-0.9  = conservative (needs a strong, multi-signal match)
-#   bias 1.0      = suppressed   (never fires this session)
-# (Pre-tic-308 the gate was inert — single matches fired everything regardless of bias. These
-# defaults assume the recalibrated confidence gate in hooks/sidecar-router.py:assess_intent.)
+# Degradation ladder (fail-soft, never worse than v1):
+#   L1 + L2 fresh → full backdrop; biases derived; mode resolved.
+#   L1 only       → coarse backdrop; mode `unresolved`; biases = conservative defaults.
+#   no chamber    → router fail-soft to raw pattern match.
 
+schema_version: "0.2"
+
+# ---------------------------------------------------------------------------
+# L1 — structured base (cheap, always-on, no LLM). The floor the sidecar never
+# goes blind below. Inferred from cwd / git-state / repo-shape / explicit toggle.
+# ---------------------------------------------------------------------------
+
+# Posture LEAN. An explicit `[Posture → X/Y]` toggle resolves it (source: toggle);
+# otherwise L1 infers a lean (source: inferred|default). Format: <ENG|OPS>/<DIRECT|META>.
+posture:
+  value: "ENG/DIRECT"
+  source: "toggle"          # toggle | inferred | default
+  confidence: 0.95
+
+# Working MODE. L1 only HINTS mode (cwd/git can't reliably resolve DIRECT vs META);
+# L2 (or an explicit toggle) RESOLVES it. When source is `hinted`/`unresolved` the
+# router gates conservatively and surfaces "UNRESOLVED" in the directive.
+mode:
+  value: "DIRECT"
+  source: "resolved"        # resolved (L2/toggle) | hinted (L1) | unresolved
+
+# STAKES — a structured signal, not a guess. `signals` is the cheap evidence:
+# dirty files on risky paths + invariant hotspots present in the repo.
+stakes:
+  level: "elevated"         # low | elevated | high
+  signals:
+    - "hotspot:charge"
+    - "hotspot:refund"
+    - "risky_path:migrations/"
+
+# REPO SHAPE — L1 evidence (cheap, no LLM). invariant_hotspots are grep-derived
+# co-write surfaces: concept words whose multiple writers form a coupled invariant.
+repo_shape:
+  root: "/path/to/your/repo"
+  languages: ["ts", "sql"]
+  invariant_hotspots: ["charge", "refund", "ledger"]
+  git_dirty: true
+
+# ---------------------------------------------------------------------------
+# L2 — enriched constitutional backdrop (the stateless cousin of harmony disposition).
+# Written by the LLM enrich pass. NOT a one-liner: the shape of the work, what it is
+# biased toward, and WHY. The router surfaces this to the model as the [backdrop]
+# preamble the firing lanes run against.
+# ---------------------------------------------------------------------------
+disposition:
+  text: |
+    Money-path refactor under crash-atomicity pressure; coupled writers span
+    charge / refund / ledger. Bias preflight + complement HARD (blast-radius breadth
+    is the live risk — un-named siblings share the non-atomic invariant). Counter on
+    irreversible schema / txn-boundary calls. Suppress ingest (context is stable).
+  meaning_state: "strained"    # preserved | strained | dissonant
+  derived_at: "2026-05-30T05:00:00Z"
+
+# ---------------------------------------------------------------------------
+# Arrows. `bias` is DERIVED at fill time from (disposition_lean, posture, mode,
+# stakes, repo_shape) — NOT hand-tuned magic floats (spec §4). Lower bias = fires
+# more easily. `live_context` is the L2 "what this lane means RIGHT NOW for THIS
+# work" line, woven into the lane directive. `disposition_lean` (hard|soft|suppress)
+# records the L2 judgment the bias derivation consumed.
+#
+# Router confidence scales with match density: ONE match ≈ base×0.65 (~0.50),
+# TWO ≈ base×0.85 (~0.68), THREE+ ≈ base (~0.78). An arrow fires when confidence > bias.
+# ---------------------------------------------------------------------------
 arrows:
   ingest:
     pointer: "skills/ingest/SKILL.md"
-    tom_briefing: "metabolize — fire when external context enters the session"
-    disposition_bias: 0.4
-    fires: "before_context_enters"
+    bias: 0.55                 # base 0.40 + soft 0.15 (context stable → suppress)
     stance: "metabolize"
+    disposition_lean: "soft"
 
   tom:
     pointer: "skills/tom/SKILL.md"
-    tom_briefing: "centroid-preserving re-expression — fire before publication or audience shift"
-    disposition_bias: 0.45
-    fires: "before_expression"
+    bias: 0.45                 # base, neutral
     stance: "centroid_preserving"
 
   complement:
     pointer: "skills/complement/SKILL.md"
-    tom_briefing: "topological closure — fire when a move lands and exposed surfaces aren't named"
-    disposition_bias: 0.6
-    fires: "after_move_lands"
+    bias: 0.35                 # base 0.55 − hard 0.20
     stance: "cooperative_topological"
+    live_context: "every ledger_entries writer must be swept before this lands — refund.ts is the un-named coupled sibling"
+    disposition_lean: "hard"
 
   counter:
     pointer: "skills/counter/SKILL.md"
-    tom_briefing: "adversarial falsification — fire before committing to an architecture or irreversible decision"
-    disposition_bias: 0.5
-    fires: "before_move_commits"
+    bias: 0.23                 # base 0.50 − hard 0.20 − elevated 0.07
     stance: "adversarial_falsifying"
+    live_context: "falsify on irreversible txn-boundary / schema calls — quote the table the lock granularity assumes"
+    disposition_lean: "hard"
 
   citation_intel:
     pointer: "skills/citation-intel/SKILL.md"
-    tom_briefing: "publication readiness — fire before publishing content to AI-searchable surfaces"
-    disposition_bias: 0.5
-    fires: "before_publication"
+    bias: 0.50                 # base, neutral (publication not the focus this session)
     stance: "readiness_check"
 
-  posture:
-    pointer: "skills/posture/SKILL.md"
-    tom_briefing: "working-mode contract — fire when next move could mutate state and posture is META"
-    disposition_bias: 0.5
-    fires: "before_mutation_under_meta"
-    stance: "contract_declaration"
-
   delegate:
-    pointer: "skills/delegate/SKILL.md"   # full protocol in the skill; compressed directive in LANE_DIRECTIVES
-    tom_briefing: "govern the swarm spec — fire before fanning a goal out to subagents"
-    disposition_bias: 0.55
-    fires: "before_fan_out"
+    pointer: "skills/delegate/SKILL.md"
+    bias: 0.55                 # base, neutral
     stance: "swarm_governing"
 
   preflight:
     pointer: "skills/preflight/SKILL.md"
-    tom_briefing: "repo-native pre-mutation gate — fire on operator momentum before the agent mutates"
-    disposition_bias: 0.4
-    fires: "before_mutation"
+    bias: 0.23                 # base 0.45 − DIRECT 0.10 − elevated 0.07 − hotspots 0.05
     stance: "preflight_obstacle_avoidance"
+    live_context: "grep every co-writer of ledger_entries before any charge/refund mutation; a list of one means you under-searched"
 
-# ----------------------------------------------------------------------
-# Support arrows — not user-facing; fill the chamber
-# ----------------------------------------------------------------------
+  # posture is toggle-detected, not bias-gated.
+  posture:
+    pointer: "skills/posture/SKILL.md"
+    stance: "contract_declaration"
 
+# ---------------------------------------------------------------------------
+# Support arrows — not user-facing; they fill the chamber.
+# ---------------------------------------------------------------------------
 support:
   tactical_hydration:
     pointer: "skills/tactical-hydration/SKILL.md"
-    role: "discover pointer targets at session start"
-
+    role: "discover pointer targets at fill"
   consolidate:
     pointer: "skills/consolidate/SKILL.md"
     role: "package discovered targets into chamber-consumable form"
 
-# ----------------------------------------------------------------------
-# Fill provenance
-# ----------------------------------------------------------------------
-
-refreshed_at: null               # ISO timestamp of last fill; set by fill protocol
-fill_source: null                # session_start | posture_shift | manual
+# ---------------------------------------------------------------------------
+# Provenance + control.
+# layers_present tells the router what it is standing on (L1 only → gate conservatively).
+# refreshed_at + the fill TTL guard staleness (Volatility Handling Law).
+# muted is honored by the SIDECAR_MUTE contract (env SIDECAR_MUTE OR-merged with this).
+# ---------------------------------------------------------------------------
+refreshed_at: "2026-05-30T05:00:00Z"
+fill_source: "session_start"     # session_start | posture_shift | stakes_crossed | manual
+layers_present: ["L1", "L2"]
+muted: []

@@ -20,12 +20,13 @@ No new orchestrator. No rebuild. No persistence to manage.
 
 ## What it does
 
-On every prompt, a single fail-soft `UserPromptSubmit` hook reads a lightweight
-**chamber** (~200 tokens of pointers + disposition), pattern-matches your message
-against a **quiver** of governance arrows, and — only when warranted — injects the
-matched lane's **protocol as a readable directive**, so your agent runs that lane
-inline *before* it acts. The intent-match is zero-LLM-cost text patterns; the lane
-itself runs in the turn you're already paying for, only when governance is warranted.
+On every prompt, a single fail-soft `UserPromptSubmit` hook reads the **chamber**
+(the sidecar's organ for holding constitutional state — see below), pattern-matches
+your message against a **quiver** of governance arrows, and — only when warranted —
+injects the matched lane's **protocol as a readable directive**, so your agent runs
+that lane inline *before* it acts. Cheap pattern-matching only *selects* which lane to
+invite; the lane's reasoning runs in the turn you were already going to pay for. The
+point isn't that the hook is cheap — it's *what the lane makes your agent do*.
 
 ```
 USER MESSAGE
@@ -41,7 +42,10 @@ The model is the consumer: the directive carries the lane's actual protocol, so 
 lane's reasoning lands in your thread — not a tag your stack has to wire up. The
 terminal of a lane pass isn't "proceed"; it's a coherence read that ends in **act or
 refuse**. That refuse-path is the structural difference from tool-chain orchestration:
-recipes end at *push/mutate*; the sidecar ends at *whether the move coheres*.
+recipes end at *push/mutate*; the sidecar ends at *whether the move coheres*. The two
+differentiators, then: the **refuse-path** (a lane can end in *don't*) and the
+**constitutional backdrop** the chamber holds (what this work is, what mode, what's at
+stake) that shapes the quiver — see *The chamber* below.
 
 ### The quiver
 
@@ -64,14 +68,52 @@ you interact with the seven above.)
 
 ---
 
+## The chamber — the constitutional organ
+
+The sidecar has no persistence, so the chamber is the **one place** it holds what your
+work *is*: the posture, the working mode, what's at stake, and a **disposition** — the
+shape of the session and what the quiver should be biased toward, and why. It is the
+stateless cousin of a persistent agent disposition. Crafting it well is the highest-
+leverage thing in the package; the chamber is the product, not its size.
+
+The chamber is **layered** ([`specs/chamber-v2.md`](specs/chamber-v2.md),
+[`hooks/chamber_fill.py`](hooks/chamber_fill.py)):
+
+- **L1 — structured base** (cheap, always-on, no LLM): reads your `cwd`, git state, repo
+  shape, and any explicit `[Posture → …]` toggle to infer a posture lean, a stakes signal
+  (touching money/migrations/secrets? dirty tree on a risky path?), and the coupled
+  invariant hotspots in your repo. This floor is always present — the sidecar is never blind.
+- **L2 — LLM enrich** (triggered, not per-prompt): resolves the working mode, writes the
+  constitutional backdrop, gives each arrow a *live context* line ("what this lane means
+  RIGHT NOW for this work"), and **derives** each arrow's firing bias from all of the above
+  — no hand-tuned magic numbers.
+
+It **degrades fail-soft**: L1+L2 → full backdrop; L1 only → coarse backdrop with mode marked
+*unresolved* so the router gates conservatively; no chamber at all → the router falls back to
+plain pattern-matching. v0.2 is never worse than the old static chamber when its inputs are missing.
+
+When the chamber carries a backdrop, the router surfaces it to your agent *before* the
+lanes run — so a fired lane is anchored to your actual surface, not just the word it matched.
+
+---
+
 ## Quick start
 
-1. **Drop the chamber** — copy `specs/chamber.yaml.example` to `~/.sidecar/chamber.yaml`
-   (or `~/.claude/sidecar/chamber.yaml`) and tune each arrow's `disposition_bias` to taste.
+1. **Fill the chamber** — generate it from your repo:
+   ```
+   python3 hooks/chamber_fill.py --trigger session_start --enrich \
+       --root /path/to/your/repo --out ~/.sidecar/chamber.yaml
+   ```
+   L1 runs instantly with no LLM; `--enrich` adds the L2 backdrop (one cheap model call,
+   re-run on posture-shift / stakes-crossed). Or copy the worked example
+   `specs/chamber.yaml.example` and edit it by hand. (Drop `--enrich` for an L1-only chamber
+   if you don't want any model call — the sidecar runs shallower, not blind.)
 2. **Register the hook** — copy the `UserPromptSubmit` block from
    `hooks/settings.json.template` into your `~/.claude/settings.json`, pointing at
-   `hooks/sidecar-router.py`.
-3. **Verify** — `bash tests/smoke.sh` (zero-cost, no model calls). You should see `PASS=14 FAIL=0`.
+   `hooks/sidecar-router.py`. (The opt-in `_repo_state_hooks_` block adds the PreToolUse /
+   PostToolUse / SubagentStop receipts.)
+3. **Verify** — `bash tests/smoke.sh` (zero-cost, no model calls). You should see `PASS=29 FAIL=0`
+   (lane firing + posture + zone deferral + the chamber-v2 degradation ladder).
 
 The router is **fail-soft by design**: a missing chamber, bad stdin, or any exception
 emits empty output. Your prompts are never blocked.
