@@ -3,7 +3,7 @@
      so a reader who criss-crossed rungs re-routes instead of acting in the wrong place. -->
 
 > ⚠️ **THIS IS THE SOVEREIGN *SIDECAR* — NOT THE SOVEREIGN CANONICAL MOUNT.**
-> You are in `canonical_developer/sovereign-sidecar/` — the **portable, persistence-free** posture/mode shim for **non-Ubiquity** environments (a governance shim that attaches to a *foreign* agent stack). It is the opposite of a mount: it ships the Ubiquity-shaped interface *without* mounting the substrate.
+> You are in `canonical_developer/sovereign-sidecar/` — a **tentative GTM (go-to-market) point-of-entry lane, held for downstream consideration**: a way to ship the Ubiquity-shaped interface as an *entry point* ahead of a full substrate onboard. *(Framing provisional — Architect tic 486; not a settled product definition. The disambiguation below holds regardless.)*
 > This file is **NOT**:
 > - the **sovereign canonical mount** → that is `canonical_developer/canonical-mount/` (the actual Ubiquity canonical install/mount lane);
 > - the **federation root / sovereign canonical** → that is `/CLAUDE.md` at the repo root.
