@@ -1,3 +1,15 @@
+<!-- APOPHATIC PRE-TEXT (tic 486, Architect-directed) — read BEFORE acting on this file.
+     Negative-space disambiguation: declare what this file is NOT, and point at the sibling lane,
+     so a reader who criss-crossed rungs re-routes instead of acting in the wrong place. -->
+
+> ⚠️ **THIS IS THE SOVEREIGN *SIDECAR* — NOT THE SOVEREIGN CANONICAL MOUNT.**
+> You are in `canonical_developer/sovereign-sidecar/` — the **portable, persistence-free** posture/mode shim for **non-Ubiquity** environments (a governance shim that attaches to a *foreign* agent stack). It is the opposite of a mount: it ships the Ubiquity-shaped interface *without* mounting the substrate.
+> This file is **NOT**:
+> - the **sovereign canonical mount** → that is `canonical_developer/canonical-mount/` (the actual Ubiquity canonical install/mount lane);
+> - the **federation root / sovereign canonical** → that is `/CLAUDE.md` at the repo root.
+>
+> If you came here looking for the canonical mount or install path, you are in the **wrong file** — go to `canonical_developer/canonical-mount/` (mount/install) or the federation root (doctrine).
+
 # Sovereign Sidecar — Domain CLAUDE.md
 
 > Before performing any action, read the [federation CLAUDE.md](../../CLAUDE.md) and the [estate CLAUDE.md](../CLAUDE.md) to understand governance hierarchy. This is a **domain rung** under the developer estate (`canonical_developer/`). Authority flows downward only: federation → estate → this domain.
