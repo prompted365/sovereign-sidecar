@@ -1,5 +1,11 @@
 # Sovereign Sidecar — Backlog
 
+> **Scope (marked tic 673):** this is the sovereign-sidecar **domain backlog** — NOT
+> federation task truth. The federation's durable carry-forward home is
+> `canonical/audit-logs/governance/backlog/` (truth: `backlog.jsonl` · tool:
+> `backlog.py`). Items here bind only this repo; anything federation-visible must be
+> filed there, markered.
+
 ## Posture contract lifecycle (hook-gated, isolable)
 
 **Status:** body shipped (tic 308 / 2026-05-29) — remaining work: lifecycle
